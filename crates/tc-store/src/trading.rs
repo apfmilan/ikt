@@ -989,11 +989,13 @@ impl Store {
 impl Store {
     /// Execution plan stored with the intent (stop, take-profit, strategy) inside `risk_verdict`.
     pub async fn intent_meta(&self, id: Uuid) -> StoreResult<serde_json::Value> {
-        let s: Option<String> = sqlx::query_scalar("SELECT CAST(risk_verdict AS CHAR) FROM tc_order_intents WHERE id = ?")
-            .bind(id.to_string())
-            .fetch_optional(&self.pool)
-            .await?
-            .flatten();
+        let s: Option<String> = sqlx::query_scalar(
+            "SELECT CAST(risk_verdict AS CHAR) FROM tc_order_intents WHERE id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
         Ok(match s {
             Some(s) => serde_json::from_str(&s)?,
             None => serde_json::Value::Null,
@@ -1003,7 +1005,11 @@ impl Store {
 
 impl Store {
     /// Total bought quantity and buy fees for an instrument since `since` (entry-fee attribution).
-    pub async fn buy_fills_since(&self, instrument: &InstrumentId, since: DateTime<Utc>) -> StoreResult<(Decimal, Decimal)> {
+    pub async fn buy_fills_since(
+        &self,
+        instrument: &InstrumentId,
+        since: DateTime<Utc>,
+    ) -> StoreResult<(Decimal, Decimal)> {
         let r = sqlx::query("SELECT COALESCE(SUM(quantity), 0) AS q, COALESCE(SUM(fee), 0) AS f FROM tc_fills WHERE instrument_id = ? AND side = 'buy' AND ts >= ?")
             .bind(instrument.as_str())
             .bind(since)
@@ -1014,6 +1020,10 @@ impl Store {
 
     /// Broker order ids already linked to an intent (T212 reconciliation must not reuse them).
     pub async fn linked_broker_order_ids(&self) -> StoreResult<Vec<String>> {
-        Ok(sqlx::query_scalar("SELECT broker_order_id FROM tc_order_intents WHERE broker_order_id IS NOT NULL").fetch_all(&self.pool).await?)
+        Ok(sqlx::query_scalar(
+            "SELECT broker_order_id FROM tc_order_intents WHERE broker_order_id IS NOT NULL",
+        )
+        .fetch_all(&self.pool)
+        .await?)
     }
 }

@@ -41,11 +41,16 @@ async fn main() -> Result<()> {
         return healthcheck(&url).await;
     }
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("TC_LOG").unwrap_or_else(|_| "info,sqlx=warn".into()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("TC_LOG")
+                .unwrap_or_else(|_| "info,sqlx=warn".into()),
+        )
         .json()
         .init();
     let cfg = config::Config::from_env()?;
-    let store = Store::connect(&cfg.database_url, 10).await.context("connecting to MySQL")?;
+    let store = Store::connect(&cfg.database_url, 10)
+        .await
+        .context("connecting to MySQL")?;
     info!(role = ?cli.role, version = env!("CARGO_PKG_VERSION"), "starting");
 
     let shutdown = tokio::sync::watch::channel(false);
@@ -57,7 +62,11 @@ async fn main() -> Result<()> {
             vapid_subject: cfg.vapid_subject.clone(),
             live_trading_flag: cfg.live_trading.clone(),
             // In the engine container `TC_BIND` is the internal health listener (127.0.0.1:9090).
-            health_bind: if cli.role == Role::Engine { Some(cfg.bind.clone()) } else { None },
+            health_bind: if cli.role == Role::Engine {
+                Some(cfg.bind.clone())
+            } else {
+                None
+            },
             version: env!("CARGO_PKG_VERSION").to_owned(),
         };
         let st = store.clone();
@@ -91,7 +100,12 @@ async fn main() -> Result<()> {
 }
 
 async fn healthcheck(url: &str) -> Result<()> {
-    let r = reqwest::Client::builder().timeout(std::time::Duration::from_secs(4)).build()?.get(url).send().await?;
+    let r = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()?
+        .get(url)
+        .send()
+        .await?;
     if r.status().is_success() {
         Ok(())
     } else {

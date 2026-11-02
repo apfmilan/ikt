@@ -836,7 +836,7 @@ pub async fn onboarding(State(st): State<Arc<AppState>>, _s: Session) -> ApiResu
             (true, Some(c)) if c.can_withdraw == Some(true) => "error",
             (true, Some(_)) => "done",
         };
-        json!({ "id": b, "status": status, "detail": c.map(|c| step_text(c)), "data": c.map(|c| json!({
+        json!({ "id": b, "status": status, "detail": c.map(step_text), "data": c.map(|c| json!({
             "authenticated": c.authenticated, "can_trade": c.can_trade, "can_withdraw": c.can_withdraw,
             "attested_no_withdraw": c.attested_no_withdraw, "account_currency": c.account_currency, "notes": c.notes, "checked_at": c.checked_at,
         })) })
@@ -1162,7 +1162,11 @@ pub async fn notif_put(
 
 /// One-line human-readable onboarding status (UI renders `detail` as text).
 fn step_text(c: &tc_store::control::CredentialStatusRow) -> String {
-    let mut parts = vec![if c.authenticated { "kapcsolódva".to_owned() } else { "nem sikerült kapcsolódni".to_owned() }];
+    let mut parts = vec![if c.authenticated {
+        "kapcsolódva".to_owned()
+    } else {
+        "nem sikerült kapcsolódni".to_owned()
+    }];
     if let Some(ccy) = &c.account_currency {
         parts.push(ccy.clone());
     }
@@ -1172,7 +1176,11 @@ fn step_text(c: &tc_store::control::CredentialStatusRow) -> String {
         (None, true) => parts.push("utalás tiltva (megerősítve)".into()),
         (None, false) => parts.push("utalási jog nem ellenőrizhető – erősítsd meg".into()),
     }
-    if let Some(last) = c.notes.as_array().and_then(|n| n.iter().rev().find_map(|x| x.as_str().filter(|s| s.starts_with("error")))) {
+    if let Some(last) = c.notes.as_array().and_then(|n| {
+        n.iter()
+            .rev()
+            .find_map(|x| x.as_str().filter(|s| s.starts_with("error")))
+    }) {
         parts.push(last.to_owned());
     }
     parts.join(" · ")

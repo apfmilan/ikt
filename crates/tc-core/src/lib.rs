@@ -18,7 +18,8 @@ pub use clock::{Clock, FixedClock, SystemClock};
 pub use instrument::{AssetClass, Broker, Candle, Instrument, InstrumentId, Interval};
 pub use money::{format_huf, parse_decimal, Currency, Money};
 pub use order::{
-    Fill, IntentReason, OrderIntent, OrderKind, OrderState, Position, PositionBook, Side, TimeInForce,
+    Fill, IntentReason, OrderIntent, OrderKind, OrderState, Position, PositionBook, Side,
+    TimeInForce,
 };
 pub use signal::{AgentKind, Decision, DecisionAction, Direction, Forecast, Signal};
 

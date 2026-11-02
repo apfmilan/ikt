@@ -80,18 +80,30 @@ pub struct Engine {
 
 impl Engine {
     pub async fn risk_engine(&self) -> (RiskEngine, RiskConfig, bool) {
-        let (cfg, exists) = match self.store.effective_config::<RiskConfig>("risk", Utc::now()).await {
+        let (cfg, exists) = match self
+            .store
+            .effective_config::<RiskConfig>("risk", Utc::now())
+            .await
+        {
             Ok(Some(c)) => (c, true),
             _ => (RiskConfig::default(), false),
         };
         let engine = RiskEngine::new(cfg.clone()).unwrap_or_else(|_| {
             // Stored config violating hard limits is ignored in favour of defaults (fail safe).
-            RiskEngine::new(RiskConfig::default()).unwrap_or_else(|_| unreachable!("default config is valid"))
+            RiskEngine::new(RiskConfig::default())
+                .unwrap_or_else(|_| unreachable!("default config is valid"))
         });
         (engine, cfg, exists)
     }
 
-    pub async fn agent(&self, agent: &str, status: &str, started: std::time::Instant, summary: impl Into<String>, metrics: serde_json::Value) {
+    pub async fn agent(
+        &self,
+        agent: &str,
+        status: &str,
+        started: std::time::Instant,
+        summary: impl Into<String>,
+        metrics: serde_json::Value,
+    ) {
         let row = AgentStatusRow {
             agent: agent.to_owned(),
             status: status.to_owned(),
@@ -103,7 +115,10 @@ impl Engine {
         if let Err(e) = self.store.put_agent_status(&row).await {
             warn!(error = %e, agent, "agent status write failed");
         }
-        let _ = self.store.push_event("agent", &json!({ "agent": agent, "status": status })).await;
+        let _ = self
+            .store
+            .push_event("agent", &json!({ "agent": agent, "status": status }))
+            .await;
     }
 
     pub async fn event(&self, t: &str, data: serde_json::Value) {
@@ -118,7 +133,11 @@ impl Engine {
 }
 
 /// Engine entry point; returns only on shutdown or fatal error (Docker restarts it).
-pub async fn run(store: Store, cfg: EngineConfig, mut shutdown: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+pub async fn run(
+    store: Store,
+    cfg: EngineConfig,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
     // Single writer: wait for the lock (another engine may still be shutting down).
     let _lock = loop {
         match store.acquire_engine_lock().await {
@@ -133,7 +152,10 @@ pub async fn run(store: Store, cfg: EngineConfig, mut shutdown: tokio::sync::wat
         }
     };
     let key = match &cfg.secret_key_file {
-        Some(p) => match std::fs::read_to_string(p).map_err(anyhow::Error::from).and_then(|s| OpeningKey::from_base64(&s).map_err(|e| anyhow::anyhow!("{e}"))) {
+        Some(p) => match std::fs::read_to_string(p)
+            .map_err(anyhow::Error::from)
+            .and_then(|s| OpeningKey::from_base64(&s).map_err(|e| anyhow::anyhow!("{e}")))
+        {
             Ok(k) => Some(k),
             Err(e) => {
                 error!(error = %e, "engine secret key unreadable; broker credentials cannot be opened");
@@ -146,9 +168,19 @@ pub async fn run(store: Store, cfg: EngineConfig, mut shutdown: tokio::sync::wat
         }
     };
     let live_armed = tc_broker::live::arm(cfg.live_trading_flag.as_deref());
-    info!(live_armed, "live order sending {}", if live_armed { "ARMED (TC_LIVE_TRADING=enabled)" } else { "disarmed" });
+    info!(
+        live_armed,
+        "live order sending {}",
+        if live_armed {
+            "ARMED (TC_LIVE_TRADING=enabled)"
+        } else {
+            "disarmed"
+        }
+    );
     let push = notify::Push::load(cfg.vapid_private_key_file.as_deref(), &cfg.vapid_subject);
-    let public_bitvavo = Arc::new(tc_broker_bitvavo::BitvavoClient::new(tc_broker_bitvavo::BitvavoConfig::new(tc_broker_bitvavo::DEFAULT_BASE_URL))?);
+    let public_bitvavo = Arc::new(tc_broker_bitvavo::BitvavoClient::new(
+        tc_broker_bitvavo::BitvavoConfig::new(tc_broker_bitvavo::DEFAULT_BASE_URL),
+    )?);
     let eng = Arc::new(Engine {
         store: store.clone(),
         cfg: cfg.clone(),
@@ -174,9 +206,19 @@ pub async fn run(store: Store, cfg: EngineConfig, mut shutdown: tokio::sync::wat
     }
     let failed = store.fail_stale_running_commands().await.unwrap_or(0);
     if failed > 0 {
-        warn!(failed, "commands interrupted by a previous crash were marked failed (not re-run)");
+        warn!(
+            failed,
+            "commands interrupted by a previous crash were marked failed (not re-run)"
+        );
     }
-    store.audit("engine", "engine_start", &json!({ "version": cfg.version, "live_armed": live_armed })).await.ok();
+    store
+        .audit(
+            "engine",
+            "engine_start",
+            &json!({ "version": cfg.version, "live_armed": live_armed }),
+        )
+        .await
+        .ok();
     heartbeat(&eng).await;
 
     // Boot sequence in RECOVERY mode.
@@ -190,7 +232,8 @@ pub async fn run(store: Store, cfg: EngineConfig, mut shutdown: tokio::sync::wat
     } else {
         warn!("reconciliation not clean: staying in RECOVERY (entries blocked)");
     }
-    eng.event("mode", json!({ "engine": eng.mode().await.as_str() })).await;
+    eng.event("mode", json!({ "engine": eng.mode().await.as_str() }))
+        .await;
 
     let mut t_cmd = tokio::time::interval(std::time::Duration::from_millis(250));
     let mut t_heartbeat = tokio::time::interval(std::time::Duration::from_secs(15));
@@ -198,7 +241,14 @@ pub async fn run(store: Store, cfg: EngineConfig, mut shutdown: tokio::sync::wat
     let mut t_market = tokio::time::interval(std::time::Duration::from_secs(300));
     let mut t_exit = tokio::time::interval(std::time::Duration::from_secs(30));
     let mut t_slow = tokio::time::interval(std::time::Duration::from_secs(3600));
-    for t in [&mut t_cmd, &mut t_heartbeat, &mut t_recon, &mut t_market, &mut t_exit, &mut t_slow] {
+    for t in [
+        &mut t_cmd,
+        &mut t_heartbeat,
+        &mut t_recon,
+        &mut t_market,
+        &mut t_exit,
+        &mut t_slow,
+    ] {
         t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     }
     loop {
@@ -241,8 +291,13 @@ pub async fn run(store: Store, cfg: EngineConfig, mut shutdown: tokio::sync::wat
 
 async fn heartbeat(eng: &Engine) {
     let mode = eng.mode().await;
-    let detail = json!({ "live_armed": eng.live_armed, "recon": eng.recon_mismatch.read().await.clone() });
-    if let Err(e) = eng.store.heartbeat("engine", mode.as_str(), &eng.cfg.version, &detail).await {
+    let detail =
+        json!({ "live_armed": eng.live_armed, "recon": eng.recon_mismatch.read().await.clone() });
+    if let Err(e) = eng
+        .store
+        .heartbeat("engine", mode.as_str(), &eng.cfg.version, &detail)
+        .await
+    {
         error!(error = %e, "heartbeat failed (DB unavailable?)");
     }
 }
@@ -255,14 +310,21 @@ async fn health_server(eng: Arc<Engine>, bind: String) {
         return;
     };
     loop {
-        let Ok((mut sock, _)) = listener.accept().await else { continue };
+        let Ok((mut sock, _)) = listener.accept().await else {
+            continue;
+        };
         let eng = eng.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 512];
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sock.read(&mut buf)).await;
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(2), sock.read(&mut buf)).await;
             let ok = eng.store.ping().await;
             let body = json!({ "status": if ok { "ok" } else { "db_down" }, "mode": eng.mode().await.as_str() }).to_string();
-            let status = if ok { "200 OK" } else { "503 Service Unavailable" };
+            let status = if ok {
+                "200 OK"
+            } else {
+                "503 Service Unavailable"
+            };
             let resp = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
             let _ = sock.write_all(resp.as_bytes()).await;
         });

@@ -28,7 +28,12 @@ fn state() -> Arc<AppState> {
 async fn post_without_origin_is_rejected() {
     let app = router(state());
     let resp = app
-        .oneshot(Request::post("/api/control/kill").header("content-type", "application/json").body(Body::from("{\"mode\":\"freeze\"}")).expect("req"))
+        .oneshot(
+            Request::post("/api/control/kill")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"mode\":\"freeze\"}"))
+                .expect("req"),
+        )
         .await
         .expect("resp");
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
@@ -53,17 +58,39 @@ async fn post_with_foreign_origin_is_rejected() {
 #[tokio::test]
 async fn protected_get_without_session_is_401() {
     let app = router(state());
-    let resp = app.oneshot(Request::get("/api/overview").body(Body::empty()).expect("req")).await.expect("resp");
+    let resp = app
+        .oneshot(
+            Request::get("/api/overview")
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("resp");
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(resp.headers().get("cache-control").and_then(|v| v.to_str().ok()), Some("no-store"));
+    assert_eq!(
+        resp.headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
 }
 
 #[tokio::test]
 async fn ceremony_ids_are_single_use() {
     let st = state();
-    let (_, r) = st.webauthn.start_passkey_registration(Uuid::new_v4(), "u", "u", None).expect("reg");
-    let id = st.put_ceremony(Ceremony::Register { state: r, device_name: "x".into(), purpose: RegisterPurpose::Pairing });
+    let (_, r) = st
+        .webauthn
+        .start_passkey_registration(Uuid::new_v4(), "u", "u", None)
+        .expect("reg");
+    let id = st.put_ceremony(Ceremony::Register {
+        state: r,
+        device_name: "x".into(),
+        purpose: RegisterPurpose::Pairing,
+    });
     assert!(st.take_ceremony(&id).is_some());
-    assert!(st.take_ceremony(&id).is_none(), "challenge must be single-use");
+    assert!(
+        st.take_ceremony(&id).is_none(),
+        "challenge must be single-use"
+    );
     assert!(st.take_ceremony("unknown").is_none());
 }

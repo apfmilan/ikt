@@ -57,7 +57,9 @@ pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations"
 
 impl Store {
     pub async fn connect(url: &str, max_connections: u32) -> StoreResult<Self> {
-        let opts = MySqlConnectOptions::from_str(url)?.timezone(Some("+00:00".into())).charset("utf8mb4");
+        let opts = MySqlConnectOptions::from_str(url)?
+            .timezone(Some("+00:00".into()))
+            .charset("utf8mb4");
         let pool = MySqlPoolOptions::new()
             .max_connections(max_connections)
             .acquire_timeout(Duration::from_secs(10))
@@ -76,9 +78,16 @@ impl Store {
     }
 
     /// Append to the hash-chained audit log.
-    pub async fn audit(&self, actor: &str, action: &str, detail: &serde_json::Value) -> StoreResult<()> {
+    pub async fn audit(
+        &self,
+        actor: &str,
+        action: &str,
+        detail: &serde_json::Value,
+    ) -> StoreResult<()> {
         let mut conn = self.pool.acquire().await?;
-        let locked: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('tc_audit_chain', 10)").fetch_one(&mut *conn).await?;
+        let locked: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('tc_audit_chain', 10)")
+            .fetch_one(&mut *conn)
+            .await?;
         if locked != Some(1) {
             return Err(StoreError::Conflict("audit chain lock timeout".into()));
         }
@@ -104,7 +113,9 @@ impl Store {
             Ok::<(), StoreError>(())
         }
         .await;
-        let _ = sqlx::query("SELECT RELEASE_LOCK('tc_audit_chain')").execute(&mut *conn).await;
+        let _ = sqlx::query("SELECT RELEASE_LOCK('tc_audit_chain')")
+            .execute(&mut *conn)
+            .await;
         result
     }
 
@@ -120,7 +131,9 @@ impl Store {
             let p: Vec<u8> = r.try_get("prev_hash")?;
             let h: Vec<u8> = r.try_get("hash")?;
             if p != prev {
-                return Err(StoreError::Invalid(format!("audit chain broken at row {i}: prev_hash mismatch")));
+                return Err(StoreError::Invalid(format!(
+                    "audit chain broken at row {i}: prev_hash mismatch"
+                )));
             }
             // `detail` is stored as the exact text that was hashed (MEDIUMTEXT, not JSON).
             let detail: String = r.try_get("detail")?;
@@ -128,7 +141,9 @@ impl Store {
             let action: String = r.try_get("action")?;
             let expect = chain_hash(&p, r.try_get("ts")?, &actor, &action, &detail);
             if h != expect.to_vec() {
-                return Err(StoreError::Invalid(format!("audit chain broken at row {i}: hash mismatch")));
+                return Err(StoreError::Invalid(format!(
+                    "audit chain broken at row {i}: hash mismatch"
+                )));
             }
             prev = h;
         }
@@ -139,9 +154,13 @@ impl Store {
     /// for the life of the returned guard.
     pub async fn acquire_engine_lock(&self) -> StoreResult<EngineLock> {
         let mut conn = self.pool.acquire().await?.detach();
-        let got: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('tc_engine_singleton', 0)").fetch_one(&mut conn).await?;
+        let got: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('tc_engine_singleton', 0)")
+            .fetch_one(&mut conn)
+            .await?;
         if got != Some(1) {
-            return Err(StoreError::Conflict("another engine instance holds the lock".into()));
+            return Err(StoreError::Conflict(
+                "another engine instance holds the lock".into(),
+            ));
         }
         Ok(EngineLock { _conn: conn })
     }
@@ -183,7 +202,11 @@ impl Store {
     /// Pool that connects on first use (tests that never touch the DB).
     pub fn connect_lazy(url: &str) -> StoreResult<Self> {
         let opts = MySqlConnectOptions::from_str(url)?;
-        Ok(Store { pool: MySqlPoolOptions::new().max_connections(1).connect_lazy_with(opts) })
+        Ok(Store {
+            pool: MySqlPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy_with(opts),
+        })
     }
 }
 

@@ -482,13 +482,23 @@ impl BitvavoClient {
     /// and onboarding falls back to user attestation. Requires live trading to be armed.
     /// All markets' 24 h tickers in one call (`GET /ticker/24h` without `market`, weight 25 per
     /// docs.bitvavo.com rate-limits). Returns (market, last, volumeQuote) for the universe scanner.
-    pub async fn tickers_24h(&self) -> BrokerResult<Vec<(String, Option<Decimal>, Option<Decimal>)>> {
+    pub async fn tickers_24h(
+        &self,
+    ) -> BrokerResult<Vec<(String, Option<Decimal>, Option<Decimal>)>> {
         let v = self.get_json("/ticker/24h", &[], false, 25).await?;
-        let arr = v.as_array().ok_or_else(|| BrokerError::Decode("ticker/24h: expected array".into()))?;
+        let arr = v
+            .as_array()
+            .ok_or_else(|| BrokerError::Decode("ticker/24h: expected array".into()))?;
         let mut out = Vec::with_capacity(arr.len());
         for t in arr {
-            let Some(m) = t.get("market").and_then(|m| m.as_str()) else { continue };
-            out.push((m.to_owned(), opt_dec(t.get("last")).ok().flatten(), opt_dec(t.get("volumeQuote")).ok().flatten()));
+            let Some(m) = t.get("market").and_then(|m| m.as_str()) else {
+                continue;
+            };
+            out.push((
+                m.to_owned(),
+                opt_dec(t.get("last")).ok().flatten(),
+                opt_dec(t.get("volumeQuote")).ok().flatten(),
+            ));
         }
         Ok(out)
     }

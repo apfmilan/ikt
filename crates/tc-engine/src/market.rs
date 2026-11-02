@@ -22,7 +22,10 @@ pub const STOCK_UNIVERSE: &[&str] = &[
 pub const CRYPTO_UNIVERSE_SIZE: usize = 12;
 
 /// Fiat-pegged assets have no directional edge to trade; excluded from the scanner universe.
-pub const STABLECOINS: &[&str] = &["USDC", "USDT", "EURC", "EURT", "DAI", "TUSD", "PYUSD", "FDUSD", "USDE", "USDS", "EURS", "EUROC"];
+pub const STABLECOINS: &[&str] = &[
+    "USDC", "USDT", "EURC", "EURT", "DAI", "TUSD", "PYUSD", "FDUSD", "USDE", "USDS", "EURS",
+    "EUROC",
+];
 
 pub async fn refresh_fx(eng: &Engine) {
     let t = Instant::now();

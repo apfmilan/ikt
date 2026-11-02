@@ -12,7 +12,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use tc_core::{Broker, Candle, Currency, Instrument, InstrumentId, Interval, OrderIntent, OrderKind, Side};
+use tc_core::{
+    Broker, Candle, Currency, Instrument, InstrumentId, Interval, OrderIntent, OrderKind, Side,
+};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -24,7 +26,11 @@ pub enum BrokerError {
     #[error("forbidden: {0}")]
     Forbidden(String),
     #[error("broker rejected request ({status}): {code} {message}")]
-    Rejected { status: u16, code: String, message: String },
+    Rejected {
+        status: u16,
+        code: String,
+        message: String,
+    },
     #[error("network error: {0}")]
     Network(String),
     #[error("timeout")]
@@ -214,7 +220,11 @@ pub trait BrokerClient: Send + Sync {
     async fn order_history(&self, since: DateTime<Utc>) -> BrokerResult<Vec<BrokerOrder>>;
     async fn get_order(&self, r: &OrderRef) -> BrokerResult<Option<BrokerOrder>>;
     /// Place exactly once. Never retried internally. Uncertain results return `Unknown`.
-    async fn place_order(&self, intent: &OrderIntent, instrument: &Instrument) -> BrokerResult<PlaceOutcome>;
+    async fn place_order(
+        &self,
+        intent: &OrderIntent,
+        instrument: &Instrument,
+    ) -> BrokerResult<PlaceOutcome>;
     async fn cancel_order(&self, r: &OrderRef) -> BrokerResult<()>;
     async fn cash_movements(&self, since: DateTime<Utc>) -> BrokerResult<Vec<CashMovement>>;
     fn health(&self) -> HealthCounters;
@@ -248,9 +258,24 @@ mod tests {
     #[test]
     fn uncertain_outcomes() {
         assert!(BrokerError::Timeout.outcome_uncertain());
-        assert!(BrokerError::Rejected { status: 503, code: "x".into(), message: String::new() }.outcome_uncertain());
-        assert!(BrokerError::Rejected { status: 408, code: "x".into(), message: String::new() }.outcome_uncertain());
-        assert!(!BrokerError::Rejected { status: 400, code: "x".into(), message: String::new() }.outcome_uncertain());
+        assert!(BrokerError::Rejected {
+            status: 503,
+            code: "x".into(),
+            message: String::new()
+        }
+        .outcome_uncertain());
+        assert!(BrokerError::Rejected {
+            status: 408,
+            code: "x".into(),
+            message: String::new()
+        }
+        .outcome_uncertain());
+        assert!(!BrokerError::Rejected {
+            status: 400,
+            code: "x".into(),
+            message: String::new()
+        }
+        .outcome_uncertain());
         assert!(!BrokerError::Auth("x".into()).outcome_uncertain());
     }
 

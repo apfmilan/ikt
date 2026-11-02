@@ -30,7 +30,12 @@ pub struct Costs {
 impl Costs {
     /// Bitvavo default tier (verified 2026-11-02 docs example: taker 0.25 %, maker 0.15 %).
     pub fn bitvavo_default() -> Self {
-        Costs { taker_fee: 0.0025, maker_fee: 0.0015, half_spread_bps: 5.0, slippage_bps: 5.0 }
+        Costs {
+            taker_fee: 0.0025,
+            maker_fee: 0.0015,
+            half_spread_bps: 5.0,
+            slippage_bps: 5.0,
+        }
     }
 
     pub fn doubled(self) -> Self {
@@ -87,7 +92,11 @@ pub struct SimParams {
 
 impl Default for SimParams {
     fn default() -> Self {
-        SimParams { risk_frac: 0.01, max_weight: 0.5, bars_per_year: 365.0 }
+        SimParams {
+            risk_frac: 0.01,
+            max_weight: 0.5,
+            bars_per_year: 365.0,
+        }
     }
 }
 
@@ -102,7 +111,14 @@ struct Open {
 }
 
 /// Simulate `strategy` on bars `[start, end)` of `s`, using earlier bars as warm-up.
-pub fn simulate(s: &Series, strategy: &dyn Strategy, costs: Costs, p: SimParams, start: usize, end: usize) -> SimResult {
+pub fn simulate(
+    s: &Series,
+    strategy: &dyn Strategy,
+    costs: Costs,
+    p: SimParams,
+    start: usize,
+    end: usize,
+) -> SimResult {
     let n = s.len().min(end);
     let mut out = SimResult::default();
     let mut tracker = RegimeTracker::default();
@@ -156,16 +172,26 @@ pub fn simulate(s: &Series, strategy: &dyn Strategy, costs: Costs, p: SimParams,
                         bar_ret -= weight * fee;
                     }
                 }
-                Action::Exit { fraction, reason, .. } => {
+                Action::Exit {
+                    fraction, reason, ..
+                } => {
                     if let Some(mut op) = pos.take() {
                         let px = costs.sell_price(o);
                         let frac = fraction.clamp(0.0, 1.0) * op.remaining;
-                        let leg_ret = (px / prev_close - 1.0) * op.weight * frac - op.weight * frac * costs.taker_fee;
+                        let leg_ret = (px / prev_close - 1.0) * op.weight * frac
+                            - op.weight * frac * costs.taker_fee;
                         bar_ret += leg_ret;
-                        op.realized_frac_ret += frac * ((px / op.t.entry_price) * (1.0 - costs.taker_fee) - 1.0);
+                        op.realized_frac_ret +=
+                            frac * ((px / op.t.entry_price) * (1.0 - costs.taker_fee) - 1.0);
                         op.remaining -= frac;
                         if op.remaining <= 1e-9 {
-                            out.trades.push(close_trade(&op, s.ts[t], px, format!("{reason:?}"), costs));
+                            out.trades.push(close_trade(
+                                &op,
+                                s.ts[t],
+                                px,
+                                format!("{reason:?}"),
+                                costs,
+                            ));
                         } else {
                             op.t.partial_taken = true;
                             // Remaining part keeps tracking from this bar open.
@@ -194,17 +220,29 @@ pub fn simulate(s: &Series, strategy: &dyn Strategy, costs: Costs, p: SimParams,
         // 2) Intrabar: protective stop (gap-aware), mark to market.
         if let Some(mut op) = pos.take() {
             let just_entered = op.entry_ts == s.ts[t];
-            let base = if just_entered { op.t.entry_price } else { prev_close };
+            let base = if just_entered {
+                op.t.entry_price
+            } else {
+                prev_close
+            };
             let stop = op.t.stop;
             if o <= stop || l <= stop {
                 let gap = o <= stop;
                 let a14 = atr(&s.high[..=t], &s.low[..=t], &s.close[..=t], 14).unwrap_or(0.0);
                 let raw = if gap { o.min(stop) - 0.25 * a14 } else { stop };
                 let px = costs.sell_price(raw.max(0.0));
-                bar_ret += (px / base - 1.0) * op.weight * op.remaining - op.weight * op.remaining * costs.taker_fee;
-                op.realized_frac_ret += op.remaining * ((px / op.t.entry_price) * (1.0 - costs.taker_fee) - 1.0);
+                bar_ret += (px / base - 1.0) * op.weight * op.remaining
+                    - op.weight * op.remaining * costs.taker_fee;
+                op.realized_frac_ret +=
+                    op.remaining * ((px / op.t.entry_price) * (1.0 - costs.taker_fee) - 1.0);
                 op.remaining = 0.0;
-                out.trades.push(close_trade(&op, s.ts[t], px, if gap { "StopGap".into() } else { "Stop".into() }, costs));
+                out.trades.push(close_trade(
+                    &op,
+                    s.ts[t],
+                    px,
+                    if gap { "StopGap".into() } else { "Stop".into() },
+                    costs,
+                ));
             } else {
                 bar_ret += (c / base - 1.0) * op.weight * op.remaining;
                 pos = Some(op);
@@ -215,7 +253,11 @@ pub fn simulate(s: &Series, strategy: &dyn Strategy, costs: Costs, p: SimParams,
         out.bar_returns.push(bar_ret);
         // 3) Decide at close of bar t.
         update_regime(&mut tracker, s, t, p.bars_per_year);
-        pending = if t + 1 < n { decide(s, strategy, &tracker, &pos, t) } else { None };
+        pending = if t + 1 < n {
+            decide(s, strategy, &tracker, &pos, t)
+        } else {
+            None
+        };
     }
     // Close any open position at the last close (end of window).
     if let Some(op) = pos.take() {
@@ -226,9 +268,11 @@ pub fn simulate(s: &Series, strategy: &dyn Strategy, costs: Costs, p: SimParams,
             *r += (px / s.close[last] - 1.0) * op.weight * op.remaining - fee;
         }
         let mut op = op;
-        op.realized_frac_ret += op.remaining * ((px / op.t.entry_price) * (1.0 - costs.taker_fee) - 1.0);
+        op.realized_frac_ret +=
+            op.remaining * ((px / op.t.entry_price) * (1.0 - costs.taker_fee) - 1.0);
         op.remaining = 0.0;
-        out.trades.push(close_trade(&op, s.ts[last], px, "WindowEnd".into(), costs));
+        out.trades
+            .push(close_trade(&op, s.ts[last], px, "WindowEnd".into(), costs));
     }
     let _ = equity;
     out
@@ -244,7 +288,13 @@ fn finish_bar(pos: &mut Option<Open>, high: f64, out: &mut SimResult) {
     }
 }
 
-fn decide(s: &Series, strategy: &dyn Strategy, tracker: &RegimeTracker, pos: &Option<Open>, t: usize) -> Option<Action> {
+fn decide(
+    s: &Series,
+    strategy: &dyn Strategy,
+    tracker: &RegimeTracker,
+    pos: &Option<Open>,
+    t: usize,
+) -> Option<Action> {
     let from = t.saturating_sub(700);
     let view = window(s, from, t + 1);
     match strategy.evaluate(&view, tracker.current, pos.as_ref().map(|p| &p.t)) {
@@ -275,7 +325,11 @@ fn window(s: &Series, from: usize, to: usize) -> Series {
 fn close_trade(op: &Open, ts: DateTime<Utc>, px: f64, reason: String, costs: Costs) -> Trade {
     let gross = px / op.t.entry_price - 1.0;
     let net = op.realized_frac_ret - op.entry_cost;
-    let r = if op.t.initial_risk > 0.0 { net * op.t.entry_price / op.t.initial_risk } else { 0.0 };
+    let r = if op.t.initial_risk > 0.0 {
+        net * op.t.entry_price / op.t.initial_risk
+    } else {
+        0.0
+    };
     let _ = costs;
     Trade {
         entry_ts: op.entry_ts,
@@ -304,17 +358,32 @@ pub struct WalkForward {
 impl WalkForward {
     /// 1d bars: 24-month IS, 6-month OOS, 6-month step.
     pub fn daily() -> Self {
-        WalkForward { is_bars: 730, oos_bars: 182, embargo_bars: 20, warmup_bars: 200 }
+        WalkForward {
+            is_bars: 730,
+            oos_bars: 182,
+            embargo_bars: 20,
+            warmup_bars: 200,
+        }
     }
 
     /// 4h bars: 12-month IS, 3-month OOS.
     pub fn four_hour() -> Self {
-        WalkForward { is_bars: 2190, oos_bars: 547, embargo_bars: 60, warmup_bars: 400 }
+        WalkForward {
+            is_bars: 2190,
+            oos_bars: 547,
+            embargo_bars: 60,
+            warmup_bars: 400,
+        }
     }
 
     /// 1h bars (research only; spec rejects sub-1h).
     pub fn hourly() -> Self {
-        WalkForward { is_bars: 4380, oos_bars: 1095, embargo_bars: 120, warmup_bars: 700 }
+        WalkForward {
+            is_bars: 4380,
+            oos_bars: 1095,
+            embargo_bars: 120,
+            warmup_bars: 700,
+        }
     }
 }
 
@@ -384,7 +453,12 @@ pub fn walk_forward(
         // In-sample: evaluate every pre-registered parameter set.
         let sharpes: Vec<f64> = grid
             .iter()
-            .map(|st| metrics::sharpe(&simulate(s, st.as_ref(), costs, sim, is_start, is_end).bar_returns, sim.bars_per_year))
+            .map(|st| {
+                metrics::sharpe(
+                    &simulate(s, st.as_ref(), costs, sim, is_start, is_end).bar_returns,
+                    sim.bars_per_year,
+                )
+            })
             .collect();
         is_sharpes_all.extend(sharpes.iter().copied());
         // Plateau, not peak: average each set with its grid neighbours.
@@ -403,27 +477,43 @@ pub fn walk_forward(
             .unwrap_or(0);
         is_chosen.push(sharpes[chosen]);
         let r = simulate(s, grid[chosen].as_ref(), costs, sim, oos_start, oos_end);
-        let r2 = simulate(s, grid[chosen].as_ref(), costs.doubled(), sim, oos_start, oos_end);
+        let r2 = simulate(
+            s,
+            grid[chosen].as_ref(),
+            costs.doubled(),
+            sim,
+            oos_start,
+            oos_end,
+        );
         folds.push(FoldReport {
             is_from: s.ts[is_start],
             oos_from: s.ts[oos_start],
             oos_to: s.ts[oos_end - 1],
             chosen_param_index: chosen,
             is_sharpe: sharpes[chosen],
-            oos: Metrics::compute(&r.trades, &r.bar_returns, r.exposure_bars, sim.bars_per_year),
+            oos: Metrics::compute(
+                &r.trades,
+                &r.bar_returns,
+                r.exposure_bars,
+                sim.bars_per_year,
+            ),
         });
         oos_trades.extend(r.trades);
         oos_returns.extend(r.bar_returns);
         oos2_trades.extend(r2.trades);
         is_start += wf.oos_bars;
     }
-    let exposure: usize = folds.iter().map(|f| (f.oos.exposure * wf.oos_bars as f64) as usize).sum();
+    let exposure: usize = folds
+        .iter()
+        .map(|f| (f.oos.exposure * wf.oos_bars as f64) as usize)
+        .sum();
     let oos = Metrics::compute(&oos_trades, &oos_returns, exposure, sim.bars_per_year);
     let pf2 = Metrics::compute(&oos2_trades, &[], 0, sim.bars_per_year).profit_factor;
     let is_sharpe_mean = tc_strategy::stats::mean(&is_chosen);
     let dsr = deflated_sharpe(&oos_returns, &is_sharpes_all, grid.len(), sim.bars_per_year);
     let regime_edges = regime_edges(&oos_trades);
-    let positive_folds = folds.iter().filter(|f| f.oos.net_return > 0.0).count() as f64 / folds.len().max(1) as f64;
+    let positive_folds =
+        folds.iter().filter(|f| f.oos.net_return > 0.0).count() as f64 / folds.len().max(1) as f64;
     let promotion = rules.evaluate(&oos, pf2, dsr, positive_folds, is_sharpe_mean);
     Some(Report {
         strategy: family.into(),
@@ -447,16 +537,27 @@ pub fn regime_edges(trades: &[Trade]) -> Vec<RegimeEdge> {
     Regime::ALL
         .iter()
         .filter_map(|r| {
-            let x: Vec<f64> = trades.iter().filter(|t| t.regime == *r).map(|t| t.gross_ret * 1e4).collect();
+            let x: Vec<f64> = trades
+                .iter()
+                .filter(|t| t.regime == *r)
+                .map(|t| t.gross_ret * 1e4)
+                .collect();
             if x.is_empty() {
                 return None;
             }
-            let wins = trades.iter().filter(|t| t.regime == *r && t.net_ret > 0.0).count();
+            let wins = trades
+                .iter()
+                .filter(|t| t.regime == *r && t.net_ret > 0.0)
+                .count();
             Some(RegimeEdge {
                 regime: *r,
                 trades: x.len(),
                 mean_gross_bps: tc_strategy::stats::mean(&x),
-                se_bps: if x.len() > 1 { tc_strategy::stats::sd(&x) / (x.len() as f64).sqrt() } else { f64::INFINITY },
+                se_bps: if x.len() > 1 {
+                    tc_strategy::stats::sd(&x) / (x.len() as f64).sqrt()
+                } else {
+                    f64::INFINITY
+                },
                 win_rate: wins as f64 / x.len() as f64,
             })
         })

@@ -120,9 +120,17 @@ pub struct Veto {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "verdict", rename_all = "snake_case")]
 pub enum Verdict {
-    Allow { quantity: Decimal },
-    AllowResized { quantity: Decimal, requested: Decimal, binding: VetoCode },
-    Veto { vetoes: Vec<Veto> },
+    Allow {
+        quantity: Decimal,
+    },
+    AllowResized {
+        quantity: Decimal,
+        requested: Decimal,
+        binding: VetoCode,
+    },
+    Veto {
+        vetoes: Vec<Veto>,
+    },
 }
 
 impl Verdict {
@@ -306,22 +314,34 @@ impl RiskEngine {
         let entry = req.class.is_entry();
         macro_rules! veto {
             ($code:expr, $detail:expr $(,)?) => {
-                v.push(Veto { code: $code, detail: $detail })
+                v.push(Veto {
+                    code: $code,
+                    detail: $detail,
+                })
             };
         }
 
         if req.quantity <= Decimal::ZERO || req.price <= Decimal::ZERO {
-            veto!(VetoCode::DataMissing, "quantity and price must be positive".into());
+            veto!(
+                VetoCode::DataMissing,
+                "quantity and price must be positive".into()
+            );
             return Verdict::Veto { vetoes: v };
         }
         // 0. Venue: Revolut and unknown venues are signal-only.
         if !broker.supports_automated_trading() {
-            veto!(VetoCode::VenueNotTradable, format!("{broker} is signal-only"));
+            veto!(
+                VetoCode::VenueNotTradable,
+                format!("{broker} is signal-only")
+            );
             return Verdict::Veto { vetoes: v };
         }
         // 26b. Long-only, no leverage: entries must be buys, exits must be sells.
         if entry && req.side != Side::Buy {
-            veto!(VetoCode::Leverage, "entries must be spot buys (no shorting)".into());
+            veto!(
+                VetoCode::Leverage,
+                "entries must be spot buys (no shorting)".into()
+            );
         }
         if !entry && req.side != Side::Sell {
             veto!(VetoCode::Leverage, "exits must be sells".into());
@@ -329,14 +349,22 @@ impl RiskEngine {
 
         // 1. Live authorization (entries; exits of existing positions remain possible).
         if entry && !s.live_authorized.get(&broker).copied().unwrap_or(false) {
-            veto!(VetoCode::LiveNotAuthorized, format!("live trading not authorized for {broker}"));
+            veto!(
+                VetoCode::LiveNotAuthorized,
+                format!("live trading not authorized for {broker}")
+            );
         }
 
         // 2. Kill switch: most restrictive of global / broker / strategy.
         let mode = s
             .kill_global
             .max(s.kill_broker.get(&broker).copied().unwrap_or_default())
-            .max(s.kill_strategy.get(&req.strategy).copied().unwrap_or_default());
+            .max(
+                s.kill_strategy
+                    .get(&req.strategy)
+                    .copied()
+                    .unwrap_or_default(),
+            );
         let kill_blocks = match mode {
             KillMode::Normal => false,
             KillMode::ReduceOnly => entry,
@@ -344,7 +372,10 @@ impl RiskEngine {
             KillMode::Freeze => true,
         };
         if kill_blocks {
-            veto!(VetoCode::KillSwitch, format!("kill switch {}", mode.as_str()));
+            veto!(
+                VetoCode::KillSwitch,
+                format!("kill switch {}", mode.as_str())
+            );
         }
 
         // 3. Credentials: never trade with a key that may be able to withdraw.
@@ -352,7 +383,10 @@ impl RiskEngine {
             None => veto!(VetoCode::CredScope, "no verified credentials".into()),
             Some(cs) => {
                 if !(cs.withdraw_disabled_verified || cs.withdraw_disabled_attested) {
-                    veto!(VetoCode::CredWithdrawCapable, "withdrawal permission not ruled out".into());
+                    veto!(
+                        VetoCode::CredWithdrawCapable,
+                        "withdrawal permission not ruled out".into()
+                    );
                 }
                 if !cs.scopes_ok {
                     veto!(VetoCode::CredScope, "missing required key scopes".into());
@@ -365,8 +399,14 @@ impl RiskEngine {
             None => veto!(VetoCode::BrokerUnhealthy, "no health data".into()),
             Some(h) => {
                 let ok_recent = h.last_ok.is_some_and(|t| now - t <= Duration::seconds(60));
-                let limited = h.last_rate_limited.is_some_and(|t| now - t <= Duration::seconds(120));
-                if !ok_recent || limited || h.error_rate_5m >= d("0.20") || h.rate_budget_remaining < d("0.20") {
+                let limited = h
+                    .last_rate_limited
+                    .is_some_and(|t| now - t <= Duration::seconds(120));
+                if !ok_recent
+                    || limited
+                    || h.error_rate_5m >= d("0.20")
+                    || h.rate_budget_remaining < d("0.20")
+                {
                     veto!(
                         VetoCode::BrokerUnhealthy,
                         format!(
@@ -376,7 +416,10 @@ impl RiskEngine {
                     );
                 }
                 if entry && h.clock_skew_ms.abs() > 1000 {
-                    veto!(VetoCode::DataStale, format!("clock skew {} ms", h.clock_skew_ms));
+                    veto!(
+                        VetoCode::DataStale,
+                        format!("clock skew {} ms", h.clock_skew_ms)
+                    );
                 }
             }
         }
@@ -401,9 +444,14 @@ impl RiskEngine {
                 }
                 if entry {
                     if (now - m.quote_ts).num_seconds() > max_quote_age {
-                        veto!(VetoCode::DataStale, format!("quote {}s old", (now - m.quote_ts).num_seconds()));
+                        veto!(
+                            VetoCode::DataStale,
+                            format!("quote {}s old", (now - m.quote_ts).num_seconds())
+                        );
                     }
-                    if (now - m.candle_ts).num_seconds() > 2 * m.candle_interval_secs.max(1) + m.candle_interval_secs {
+                    if (now - m.candle_ts).num_seconds()
+                        > 2 * m.candle_interval_secs.max(1) + m.candle_interval_secs
+                    {
                         veto!(VetoCode::DataStale, "candles older than 2 intervals".into());
                     }
                     if spread_bps.is_none() {
@@ -433,12 +481,14 @@ impl RiskEngine {
             if s.recon_mismatch {
                 veto!(VetoCode::ReconHalt, "reconciliation mismatch open".into());
             }
-            if s
-                .intents
-                .iter()
-                .any(|i| i.state == OrderState::Unknown && (now - i.created_at).num_seconds() > c.max_unknown_age_secs)
-            {
-                veto!(VetoCode::ReconHalt, "UNKNOWN intent older than limit".into());
+            if s.intents.iter().any(|i| {
+                i.state == OrderState::Unknown
+                    && (now - i.created_at).num_seconds() > c.max_unknown_age_secs
+            }) {
+                veto!(
+                    VetoCode::ReconHalt,
+                    "UNKNOWN intent older than limit".into()
+                );
             }
         }
 
@@ -451,11 +501,16 @@ impl RiskEngine {
                     if !i.tradable || !i.eligible {
                         veto!(
                             VetoCode::InstrumentIneligible,
-                            i.ineligible_reason.clone().unwrap_or_else(|| "not tradable".into()),
+                            i.ineligible_reason
+                                .clone()
+                                .unwrap_or_else(|| "not tradable".into()),
                         );
                     }
                     if req.class == OrderClass::LongTerm && !i.long_term_whitelisted {
-                        veto!(VetoCode::InstrumentIneligible, "not in long-term investment whitelist".into());
+                        veto!(
+                            VetoCode::InstrumentIneligible,
+                            "not in long-term investment whitelist".into()
+                        );
                     }
                     match i.session {
                         None => {}
@@ -463,18 +518,29 @@ impl RiskEngine {
                         Some(Some((open, close))) => {
                             let buf = Duration::minutes(c.market_open_buffer_mins);
                             if now < open + buf || now > close - buf {
-                                veto!(VetoCode::MarketClosed, "outside session (with 15 min buffers)".into());
+                                veto!(
+                                    VetoCode::MarketClosed,
+                                    "outside session (with 15 min buffers)".into()
+                                );
                             }
                         }
                     }
-                    if req.class == OrderClass::Entry && now - i.listed_at < Duration::days(c.new_listing_days) {
-                        veto!(VetoCode::NewListing, format!("listed {} days ago", (now - i.listed_at).num_days()));
+                    if req.class == OrderClass::Entry
+                        && now - i.listed_at < Duration::days(c.new_listing_days)
+                    {
+                        veto!(
+                            VetoCode::NewListing,
+                            format!("listed {} days ago", (now - i.listed_at).num_days())
+                        );
                     }
                 } else if let Some(Some((open, close))) = i.session {
                     // Exits on equities outside the session would queue at the broker; allowed only
                     // as broker-resting stops, which are placed separately.
                     if (now < open || now > close) && req.class != OrderClass::ExitProtective {
-                        veto!(VetoCode::MarketClosed, "market closed; protective stop remains at broker".into());
+                        veto!(
+                            VetoCode::MarketClosed,
+                            "market closed; protective stop remains at broker".into()
+                        );
                     }
                 }
             }
@@ -483,7 +549,10 @@ impl RiskEngine {
         // 10-11. Loss limits and drawdown on unitized NAV (deposits cannot hide losses).
         let mut risk_mult = Decimal::ONE;
         if req.class == OrderClass::Entry {
-            if s.nav_unit <= Decimal::ZERO || s.nav_unit_day_start <= Decimal::ZERO || s.nav_unit_peak <= Decimal::ZERO {
+            if s.nav_unit <= Decimal::ZERO
+                || s.nav_unit_day_start <= Decimal::ZERO
+                || s.nav_unit_peak <= Decimal::ZERO
+            {
                 veto!(VetoCode::DataMissing, "NAV unavailable".into());
             } else {
                 let day = s.nav_unit / s.nav_unit_day_start - Decimal::ONE;
@@ -509,7 +578,10 @@ impl RiskEngine {
             // 12. Loss chasing.
             let mut trades: Vec<&ClosedTrade> = s.closed_trades.iter().collect();
             trades.sort_by_key(|t| std::cmp::Reverse(t.closed_at));
-            let streak = trades.iter().take_while(|t| t.net_pnl_huf < Decimal::ZERO).count() as u32;
+            let streak = trades
+                .iter()
+                .take_while(|t| t.net_pnl_huf < Decimal::ZERO)
+                .count() as u32;
             if streak >= c.loss_streak {
                 if let Some(last) = trades.first() {
                     if now - last.closed_at < Duration::hours(c.loss_streak_cooldown_hours) {
@@ -521,17 +593,33 @@ impl RiskEngine {
                 .iter()
                 .any(|t| t.net_pnl_huf < Decimal::ZERO && now - t.closed_at < Duration::hours(24));
             if loss_24h && req.size_multiplier > Decimal::ONE {
-                veto!(VetoCode::SizeUpAfterLoss, "size increase after a loss".into());
+                veto!(
+                    VetoCode::SizeUpAfterLoss,
+                    "size increase after a loss".into()
+                );
             }
             if trades.iter().any(|t| {
-                t.stopped_out && t.instrument == req.instrument && now - t.closed_at < Duration::hours(c.revenge_reentry_hours)
+                t.stopped_out
+                    && t.instrument == req.instrument
+                    && now - t.closed_at < Duration::hours(c.revenge_reentry_hours)
             }) {
-                veto!(VetoCode::RevengeReentry, "re-entry after stop-out too soon".into());
+                veto!(
+                    VetoCode::RevengeReentry,
+                    "re-entry after stop-out too soon".into()
+                );
             }
 
             // 13. Order rate.
-            if s.entries_last_hour >= c.max_entries_per_hour || s.entries_today >= c.max_entries_per_day {
-                veto!(VetoCode::OrderRate, format!("{} entries/h, {} today", s.entries_last_hour, s.entries_today));
+            if s.entries_last_hour >= c.max_entries_per_hour
+                || s.entries_today >= c.max_entries_per_day
+            {
+                veto!(
+                    VetoCode::OrderRate,
+                    format!(
+                        "{} entries/h, {} today",
+                        s.entries_last_hour, s.entries_today
+                    )
+                );
             }
             // 15. Open positions (trading positions only).
             let open = s.positions.iter().filter(|p| !p.long_term).count() as u32;
@@ -541,21 +629,36 @@ impl RiskEngine {
             }
             // 16. Strategy approval.
             if !s.strategy_approved {
-                veto!(VetoCode::StrategyNotApproved, format!("strategy {} not live-approved", req.strategy));
+                veto!(
+                    VetoCode::StrategyNotApproved,
+                    format!("strategy {} not live-approved", req.strategy)
+                );
             }
         }
 
         // 14. Duplicates / in-flight (all classes).
         for i in s.intents.iter().filter(|i| i.instrument == req.instrument) {
-            if matches!(i.state, OrderState::Submitting | OrderState::Unknown | OrderState::Pending) {
-                veto!(VetoCode::InFlight, format!("intent in state {}", i.state.as_str()));
+            if matches!(
+                i.state,
+                OrderState::Submitting | OrderState::Unknown | OrderState::Pending
+            ) {
+                veto!(
+                    VetoCode::InFlight,
+                    format!("intent in state {}", i.state.as_str())
+                );
             } else if i.side == req.side && i.state == OrderState::Open && !entry {
-                veto!(VetoCode::InFlight, "resting sell order must be cancelled first".into());
+                veto!(
+                    VetoCode::InFlight,
+                    "resting sell order must be cancelled first".into()
+                );
             } else if i.side == req.side
                 && entry
                 && (now - i.created_at).num_seconds().abs() < c.duplicate_window_secs
             {
-                veto!(VetoCode::Duplicate, "same instrument and side within duplicate window".into());
+                veto!(
+                    VetoCode::Duplicate,
+                    "same instrument and side within duplicate window".into()
+                );
             }
         }
 
@@ -566,7 +669,10 @@ impl RiskEngine {
                 _ => c.max_spread_bps_equity,
             };
             if (entry || req.class == OrderClass::ExitSignal) && sp > max {
-                veto!(VetoCode::SpreadWide, format!("spread {} bps > {max}", sp.round_dp(1)));
+                veto!(
+                    VetoCode::SpreadWide,
+                    format!("spread {} bps > {max}", sp.round_dp(1))
+                );
             }
         }
 
@@ -578,7 +684,9 @@ impl RiskEngine {
             };
             match s.market.as_ref().and_then(|m| m.liquidity_notional) {
                 None => veto!(VetoCode::DataMissing, "no liquidity data".into()),
-                Some(liq) if liq < min_liq => veto!(VetoCode::Illiquid, format!("liquidity {liq} < {min_liq}")),
+                Some(liq) if liq < min_liq => {
+                    veto!(VetoCode::Illiquid, format!("liquidity {liq} < {min_liq}"))
+                }
                 Some(_) => {}
             }
         }
@@ -592,7 +700,10 @@ impl RiskEngine {
                 .map(|p| p.free_quantity)
                 .unwrap_or(Decimal::ZERO);
             if req.quantity > free {
-                veto!(VetoCode::Oversell, format!("sell {} > free {free}", req.quantity));
+                veto!(
+                    VetoCode::Oversell,
+                    format!("sell {} > free {free}", req.quantity)
+                );
             }
         }
 
@@ -603,7 +714,10 @@ impl RiskEngine {
         let price_huf = req.price * fx;
         let mut qty = req.quantity;
         let mut binding: Option<VetoCode> = None;
-        let clamp = |limit_qty: Decimal, code: VetoCode, qty: &mut Decimal, binding: &mut Option<VetoCode>| {
+        let clamp = |limit_qty: Decimal,
+                     code: VetoCode,
+                     qty: &mut Decimal,
+                     binding: &mut Option<VetoCode>| {
             let l = limit_qty.max(Decimal::ZERO);
             if l < *qty {
                 *qty = l;
@@ -614,17 +728,29 @@ impl RiskEngine {
         if req.class == OrderClass::Entry {
             // 20. Per-trade risk with effective stop (farther of stop and p99 gap).
             match req.stop_price {
-                None => veto!(VetoCode::RiskPerTrade, "entry without protective stop".into()),
+                None => veto!(
+                    VetoCode::RiskPerTrade,
+                    "entry without protective stop".into()
+                ),
                 Some(stop) if stop >= req.price || stop <= Decimal::ZERO => {
                     veto!(VetoCode::RiskPerTrade, "stop must be below entry".into())
                 }
                 Some(stop) => {
                     let gap_stop = req.price * (Decimal::ONE - req.gap_p99.max(Decimal::ZERO));
                     let stop_eff = stop.min(gap_stop);
-                    let per_unit_loss_huf = (req.price - stop_eff) * fx + price_huf * s.taker_fee * d("2");
-                    let budget = s.equity_huf * c.risk_per_trade * risk_mult * req.size_multiplier.min(Decimal::ONE);
+                    let per_unit_loss_huf =
+                        (req.price - stop_eff) * fx + price_huf * s.taker_fee * d("2");
+                    let budget = s.equity_huf
+                        * c.risk_per_trade
+                        * risk_mult
+                        * req.size_multiplier.min(Decimal::ONE);
                     if per_unit_loss_huf > Decimal::ZERO {
-                        clamp(budget / per_unit_loss_huf, VetoCode::RiskPerTrade, &mut qty, &mut binding);
+                        clamp(
+                            budget / per_unit_loss_huf,
+                            VetoCode::RiskPerTrade,
+                            &mut qty,
+                            &mut binding,
+                        );
                     }
                 }
             }
@@ -640,7 +766,11 @@ impl RiskEngine {
                 .sum::<Decimal>()
                 + s.intents
                     .iter()
-                    .filter(|i| i.instrument == req.instrument && i.side == Side::Buy && i.state.is_live_or_uncertain())
+                    .filter(|i| {
+                        i.instrument == req.instrument
+                            && i.side == Side::Buy
+                            && i.state.is_live_or_uncertain()
+                    })
                     .map(|i| i.notional_huf)
                     .sum::<Decimal>();
             if req.class == OrderClass::Entry {
@@ -676,7 +806,12 @@ impl RiskEngine {
                     &mut qty,
                     &mut binding,
                 );
-                let total: Decimal = s.positions.iter().filter(|p| !p.long_term).map(|p| p.value_huf).sum();
+                let total: Decimal = s
+                    .positions
+                    .iter()
+                    .filter(|p| !p.long_term)
+                    .map(|p| p.value_huf)
+                    .sum();
                 clamp(
                     (s.equity_huf * c.total_cap - total - pending_buys) / price_huf,
                     VetoCode::TotalCap,
@@ -685,11 +820,17 @@ impl RiskEngine {
                 );
 
                 // 24. Concentration per correlation cluster.
-                let in_cluster: Vec<&PositionExposure> =
-                    s.positions.iter().filter(|p| !p.long_term && p.cluster == req.cluster).collect();
+                let in_cluster: Vec<&PositionExposure> = s
+                    .positions
+                    .iter()
+                    .filter(|p| !p.long_term && p.cluster == req.cluster)
+                    .collect();
                 let cluster_new = !in_cluster.iter().any(|p| p.instrument == req.instrument);
                 if cluster_new && in_cluster.len() as u32 >= c.max_positions_per_cluster {
-                    veto!(VetoCode::Concentration, format!("{} positions in cluster {}", in_cluster.len(), req.cluster));
+                    veto!(
+                        VetoCode::Concentration,
+                        format!("{} positions in cluster {}", in_cluster.len(), req.cluster)
+                    );
                 }
                 let cluster_value: Decimal = in_cluster.iter().map(|p| p.value_huf).sum();
                 clamp(
@@ -703,29 +844,49 @@ impl RiskEngine {
             // 25. Cash after local reservations and a floor.
             let floor = (s.equity_huf * c.cash_floor_frac).max(c.cash_floor_min_huf);
             let usable = s.cash_available_huf - s.cash_reserved_local_huf - floor;
-            let per_unit_cash = price_huf * (Decimal::ONE + s.taker_fee + c.fx_fee_bps / BPS + c.cash_buffer_frac);
-            clamp(usable / per_unit_cash, VetoCode::InsufficientCash, &mut qty, &mut binding);
+            let per_unit_cash =
+                price_huf * (Decimal::ONE + s.taker_fee + c.fx_fee_bps / BPS + c.cash_buffer_frac);
+            clamp(
+                usable / per_unit_cash,
+                VetoCode::InsufficientCash,
+                &mut qty,
+                &mut binding,
+            );
         }
 
         // 21. Minimum order size after flooring to venue precision (all classes).
-        qty = qty.round_dp_with_strategy(inst.quantity_decimals, rust_decimal::RoundingStrategy::ToZero);
+        qty = qty.round_dp_with_strategy(
+            inst.quantity_decimals,
+            rust_decimal::RoundingStrategy::ToZero,
+        );
         let notional_quote = qty * req.price;
         let min_notional = inst.min_notional * d("1.02");
         if qty <= Decimal::ZERO || qty < inst.min_quantity || notional_quote < min_notional {
             let code = binding.unwrap_or(VetoCode::BelowMinOrder);
             veto!(
                 code,
-                format!("final quantity {qty} (notional {}) below venue minimum {}", notional_quote.round_dp(2), min_notional),
+                format!(
+                    "final quantity {qty} (notional {}) below venue minimum {}",
+                    notional_quote.round_dp(2),
+                    min_notional
+                ),
             );
             if code != VetoCode::BelowMinOrder {
-                veto!(VetoCode::BelowMinOrder, "resized order below venue minimum".into());
+                veto!(
+                    VetoCode::BelowMinOrder,
+                    "resized order below venue minimum".into()
+                );
             }
         }
 
         // 17. Fee-aware expected edge on the final size (entries).
         if req.class == OrderClass::Entry {
             let spread = spread_bps.unwrap_or(Decimal::ZERO);
-            let fx_leg = if req.asset_class == AssetClass::Crypto { Decimal::ZERO } else { c.fx_fee_bps * d("2") };
+            let fx_leg = if req.asset_class == AssetClass::Crypto {
+                Decimal::ZERO
+            } else {
+                c.fx_fee_bps * d("2")
+            };
             let cost_rt = s.taker_fee * BPS * d("2") + spread + c.slippage_bps * d("2") + fx_leg;
             let conservative = req.edge_bps - req.edge_se_bps;
             if conservative < cost_rt + c.edge_buffer_bps {
@@ -741,7 +902,13 @@ impl RiskEngine {
             } else {
                 let expected_net_huf = (req.edge_bps - cost_rt) / BPS * qty * price_huf;
                 if expected_net_huf < c.min_expected_net_huf {
-                    veto!(VetoCode::EdgeBelowCost, format!("expected net {} HUF too small", expected_net_huf.round_dp(0)));
+                    veto!(
+                        VetoCode::EdgeBelowCost,
+                        format!(
+                            "expected net {} HUF too small",
+                            expected_net_huf.round_dp(0)
+                        )
+                    );
                 }
             }
         }
@@ -752,7 +919,11 @@ impl RiskEngine {
             return Verdict::Veto { vetoes: v };
         }
         if qty < req.quantity {
-            Verdict::AllowResized { quantity: qty, requested: req.quantity, binding: binding.unwrap_or(VetoCode::BelowMinOrder) }
+            Verdict::AllowResized {
+                quantity: qty,
+                requested: req.quantity,
+                binding: binding.unwrap_or(VetoCode::BelowMinOrder),
+            }
         } else {
             Verdict::Allow { quantity: qty }
         }
@@ -762,7 +933,11 @@ impl RiskEngine {
 fn same_class(a: AssetClass, b: AssetClass) -> bool {
     matches!(
         (a, b),
-        (AssetClass::Crypto, AssetClass::Crypto) | (AssetClass::Stock | AssetClass::Etf, AssetClass::Stock | AssetClass::Etf)
+        (AssetClass::Crypto, AssetClass::Crypto)
+            | (
+                AssetClass::Stock | AssetClass::Etf,
+                AssetClass::Stock | AssetClass::Etf
+            )
     )
 }
 

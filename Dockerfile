@@ -19,10 +19,13 @@ WORKDIR /src
 # Context is filtered by .dockerignore (no apps/desktop, docs, secrets, rust-toolchain.toml).
 COPY . .
 # BuildKit cache mounts keep the registry and target dir between builds (no cargo-chef needed).
+# Optional `build_ca` secret: extra CA for builds behind a TLS-intercepting proxy (unused in normal builds).
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p tc-server -p tc-cli \
+    --mount=type=secret,id=build_ca,required=false \
+    if [ -s /run/secrets/build_ca ]; then export CARGO_HTTP_CAINFO=/run/secrets/build_ca; fi \
+ && cargo build --release --locked -p tc-server -p tc-cli \
  && mkdir -p /out \
  && cp target/release/tc-server target/release/tc /out/
 
@@ -45,16 +48,18 @@ CMD ["/usr/local/bin/tc-server", "--role", "api"]
 FROM node:22-alpine AS web-builder
 WORKDIR /web
 COPY apps/web/package.json apps/web/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN --mount=type=secret,id=build_ca,required=false \
+    if [ -s /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi \
+ && npm ci --no-audit --no-fund
 COPY apps/web ./
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build \
  && test -f out/index.html
-# CSP: if the web build emits out/csp-hashes.txt (one CSP source per line, e.g.
+# CSP: if the web build emits out/_csp/script-hashes.txt (one CSP source per line, e.g.
 # 'sha256-AbC...='), use those hashes; otherwise fall back to 'unsafe-inline' (documented gap).
 RUN set -eu; \
-    if [ -s out/csp-hashes.txt ]; then \
-      SCRIPT_SRC="'self' $(tr '\n' ' ' < out/csp-hashes.txt)"; \
+    if [ -s out/_csp/script-hashes.txt ]; then \
+      SCRIPT_SRC="'self' $(tr '\n' ' ' < out/_csp/script-hashes.txt)"; \
     else \
       SCRIPT_SRC="'self' 'unsafe-inline'"; \
     fi; \
