@@ -5,6 +5,9 @@ name: trading-center
 
 x-hardening: &hardening
   restart: unless-stopped
+  # No core dumps: a crash must never write key material to disk.
+  ulimits:
+    core: 0
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]

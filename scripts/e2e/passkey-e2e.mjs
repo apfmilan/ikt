@@ -109,6 +109,12 @@ try {
   check("kill switch release with step-up", release2.status === 200, `status ${release2.status}`);
   const replay = await api("/api/control/kill", { method: "POST", headers: { "content-type": "application/json", "x-stepup-token": token }, body: JSON.stringify({ mode: "normal" }) });
   check("step-up token is single-use (replay refused)", replay.status === 403);
+  const pair = await api("/api/auth/pair", { method: "POST", body: "{}" });
+  check("pairing a new device requires step-up", pair.status === 403 && pair.body?.error?.code === "stepup_required");
+  const flat = await api("/api/control/kill", { method: "POST", body: JSON.stringify({ mode: "flatten" }) });
+  check("flatten (sell everything) requires step-up", flat.status === 403 && flat.body?.error?.code === "stepup_required");
+  const evil = await api("/api/push/subscribe", { method: "POST", body: JSON.stringify({ endpoint: "https://169.254.169.254/x", keys: { p256dh: "a", auth: "b" } }) });
+  check("push endpoint restricted to browser push services", evil.status === 400);
   const live = await api("/api/control/live", { method: "POST", body: JSON.stringify({ broker: "bitvavo", enabled: true }) });
   check("enabling live trading without step-up is refused", live.status === 403);
 

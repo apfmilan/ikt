@@ -321,8 +321,22 @@ pub async fn update_regime(
     if s.len() < 160 {
         return None;
     }
+    let last_ts = *s.ts.last()?;
     let mut map = eng.regimes.lock().await;
     let fresh = !map.contains_key(id);
+    {
+        let mut bars = eng.regime_bar.lock().await;
+        if !fresh && bars.get(id) == Some(&last_ts) {
+            // Same closed bar as last scan: hysteresis must not advance again.
+            return Some((
+                map.get(id)
+                    .map(|t| t.current)
+                    .unwrap_or(regime::Regime::Transition),
+                tc_strategy::shock(&s),
+            ));
+        }
+        bars.insert(id.clone(), last_ts);
+    }
     let tracker = map.entry(id.clone()).or_insert_with(RegimeTracker::default);
     // Replay the last bars for a new tracker so hysteresis state is meaningful after restart.
     let from = if fresh {

@@ -32,6 +32,8 @@ pub const STEPUP_ACTIONS: &[&str] = &[
     "credentials_change",
     "device_remove",
     "plan_change",
+    "flatten",
+    "device_add",
 ];
 
 fn limited(st: &AppState) -> ApiResult<()> {
@@ -230,6 +232,34 @@ pub async fn register_finish(
         .store
         .insert_passkey(pk.cred_id().as_ref(), &pj, &device_name)
         .await?;
+    if purpose != RegisterPurpose::FirstSetup {
+        let title = if purpose == RegisterPurpose::Recovery {
+            "Helyreállító kóddal új passkey"
+        } else {
+            "Új eszköz párosítva"
+        };
+        let _ = st
+            .store
+            .enqueue_command(
+                "notify",
+                &json!({ "category": "critical_risk", "title": title, "body": device_name }),
+                &format!("passkey:{id}"),
+                None,
+            )
+            .await;
+    }
+    if purpose == RegisterPurpose::Recovery {
+        // Recovery may mean a lost or stolen device: end every session and stop new entries.
+        st.store.revoke_all_sessions().await?;
+        st.store
+            .set_kill(
+                "global",
+                tc_risk::KillMode::ReduceOnly,
+                "account recovery",
+                &format!("passkey:{id}"),
+            )
+            .await?;
+    }
     let mut recovery_codes = Vec::new();
     if purpose == RegisterPurpose::FirstSetup {
         st.store.invalidate_tokens(TokenKind::Setup).await?;
@@ -413,7 +443,13 @@ pub async fn stepup_finish(
     ))
 }
 
-pub async fn pair_code(State(st): State<Arc<AppState>>, s: Session) -> ApiResult<Json<Value>> {
+pub async fn pair_code(
+    State(st): State<Arc<AppState>>,
+    s: Session,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    // Adding a device grants full control, so it needs a fresh passkey assertion (SEC-07).
+    require_stepup(&st, &headers, "device_add").await?;
     let code = random_token(12);
     st.store
         .insert_token(
@@ -469,5 +505,6 @@ pub async fn logout(
     st.store.revoke_session(&s.token).await?;
     let mut c = Cookie::from(st.cookie_name());
     c.set_path("/");
+    c.set_secure(st.secure_cookies);
     Ok((jar.remove(c), Json(json!({ "ok": true }))))
 }

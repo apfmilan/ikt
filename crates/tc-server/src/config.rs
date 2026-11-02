@@ -4,7 +4,7 @@
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     pub database_url: String,
     pub bind: String,
@@ -61,5 +61,20 @@ impl Config {
                 .unwrap_or_else(|| "mailto:admin@localhost".into()),
             live_trading: env("TC_LIVE_TRADING"),
         })
+    }
+}
+
+impl std::fmt::Debug for Config {
+    /// Redacts the database URL (contains the password) and never prints key material.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("database_url", &"<redacted>")
+            .field("bind", &self.bind)
+            .field("rp_id", &self.rp_id)
+            .field("rp_origin", &self.rp_origin)
+            .field("engine_public_key", &self.engine_public_key.is_some())
+            .field("vapid_public_key", &self.vapid_public_key.is_some())
+            .field("live_trading", &self.live_trading)
+            .finish()
     }
 }

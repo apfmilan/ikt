@@ -299,3 +299,16 @@ impl Store {
         Ok(())
     }
 }
+
+impl Store {
+    /// Revoke every session (account recovery, suspected compromise).
+    pub async fn revoke_all_sessions(&self) -> StoreResult<u64> {
+        Ok(
+            sqlx::query("UPDATE tc_sessions SET revoked_at = ? WHERE revoked_at IS NULL")
+                .bind(now_micros())
+                .execute(&self.pool)
+                .await?
+                .rows_affected(),
+        )
+    }
+}

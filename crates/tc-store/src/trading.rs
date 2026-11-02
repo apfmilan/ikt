@@ -158,11 +158,11 @@ fn reason_parse(s: &str) -> StoreResult<IntentReason> {
         .map_err(|e| StoreError::Invalid(e.to_string()))
 }
 
-fn side_parse(s: &str) -> Side {
-    if s == "sell" {
-        Side::Sell
-    } else {
-        Side::Buy
+fn side_parse(s: &str) -> StoreResult<Side> {
+    match s {
+        "sell" => Ok(Side::Sell),
+        "buy" => Ok(Side::Buy),
+        o => Err(StoreError::Invalid(format!("unknown side {o}"))),
     }
 }
 
@@ -176,7 +176,7 @@ fn intent_from_row(r: &sqlx::mysql::MySqlRow) -> StoreResult<IntentRow> {
         intent: OrderIntent {
             id: Uuid::parse_str(&id).map_err(|e| StoreError::Invalid(e.to_string()))?,
             instrument: InstrumentId::parse(&r.try_get::<String, _>("instrument_id")?)?,
-            side: side_parse(&r.try_get::<String, _>("side")?),
+            side: side_parse(&r.try_get::<String, _>("side")?)?,
             kind: serde_json::from_str::<OrderKind>(&kind)?,
             quantity: r.try_get("quantity")?,
             time_in_force: tif_parse(&r.try_get::<String, _>("time_in_force")?),
@@ -255,15 +255,33 @@ impl Store {
     }
 
     pub async fn instruments(&self, broker: Option<Broker>) -> StoreResult<Vec<Instrument>> {
+        self.instruments_inner(broker, None).await
+    }
+
+    async fn instruments_where_id(&self, id: &InstrumentId) -> StoreResult<Vec<Instrument>> {
+        self.instruments_inner(None, Some(id)).await
+    }
+
+    async fn instruments_inner(
+        &self,
+        broker: Option<Broker>,
+        id: Option<&InstrumentId>,
+    ) -> StoreResult<Vec<Instrument>> {
         let sql = "SELECT id, name, asset_class, quote_currency, isin, min_notional, min_quantity, quantity_decimals, tick_size, tradable, first_seen FROM tc_instruments";
-        let rows = match broker {
-            Some(b) => {
+        let rows = match (broker, id) {
+            (_, Some(i)) => {
+                sqlx::query(&format!("{sql} WHERE id = ?"))
+                    .bind(i.as_str())
+                    .fetch_all(&self.pool)
+                    .await?
+            }
+            (Some(b), None) => {
                 sqlx::query(&format!("{sql} WHERE broker = ? ORDER BY id"))
                     .bind(b.as_str())
                     .fetch_all(&self.pool)
                     .await?
             }
-            None => {
+            (None, None) => {
                 sqlx::query(&format!("{sql} ORDER BY id"))
                     .fetch_all(&self.pool)
                     .await?
@@ -294,11 +312,7 @@ impl Store {
     }
 
     pub async fn instrument(&self, id: &InstrumentId) -> StoreResult<Option<Instrument>> {
-        Ok(self
-            .instruments(Some(id.broker()))
-            .await?
-            .into_iter()
-            .find(|i| &i.id == id))
+        Ok(self.instruments_where_id(id).await?.into_iter().next())
     }
 
     // ---------- candles ----------
@@ -369,6 +383,7 @@ impl Store {
         risk_verdict: &serde_json::Value,
     ) -> StoreResult<()> {
         let now = now_micros();
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO tc_order_intents (id, instrument_id, side, kind_json, quantity, time_in_force, reason, strategy, decision_id, reference_price, state, risk_verdict, created_at, updated_at)
              VALUES (?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, 'pending', CAST(? AS JSON), ?, ?)",
@@ -386,14 +401,15 @@ impl Store {
         .bind(serde_json::to_string(risk_verdict)?)
         .bind(i.created_at)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
         sqlx::query("INSERT INTO tc_order_events (intent_id, from_state, to_state, detail, ts) VALUES (?, 'none', 'pending', CAST(? AS JSON), ?)")
             .bind(i.id.to_string())
             .bind(serde_json::to_string(risk_verdict)?)
             .bind(now)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(())
     }
 

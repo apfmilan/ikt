@@ -535,3 +535,33 @@ fn verdict_is_deterministic() {
     let b = e.evaluate(&entry(), &snap(), now());
     assert_eq!(a, b);
 }
+
+#[test]
+fn protective_exit_allowed_without_fx_or_metadata() {
+    let mut s = with_btc_position(snap(), dec!(0.0002));
+    s.fx_to_huf = None;
+    s.instrument = None;
+    let v = engine().evaluate(&exit(OrderClass::ExitProtective), &s, now());
+    assert_eq!(
+        v,
+        Verdict::Allow {
+            quantity: dec!(0.0002)
+        }
+    );
+    // Entries still veto on missing data.
+    assert!(codes(&engine().evaluate(&entry(), &s, now())).contains(&VetoCode::DataMissing));
+}
+
+#[test]
+fn resting_entry_blocks_new_entry_regardless_of_age() {
+    let mut s = snap();
+    s.intents.push(IntentSummary {
+        instrument: btc(),
+        side: Side::Buy,
+        state: OrderState::Open,
+        class: OrderClass::Entry,
+        created_at: now() - Duration::days(2),
+        notional_huf: dec!(3000),
+    });
+    assert!(codes(&engine().evaluate(&entry(), &s, now())).contains(&VetoCode::InFlight));
+}

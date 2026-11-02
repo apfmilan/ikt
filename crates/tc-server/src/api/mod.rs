@@ -64,6 +64,7 @@ pub struct AppState {
     pub secure_cookies: bool,
     pub ceremonies: Mutex<HashMap<String, (Instant, Ceremony)>>,
     pub auth_limiter: Mutex<(Instant, u32)>,
+    pub ip_limiter: Mutex<HashMap<String, (Instant, u32)>>,
     pub events: tokio::sync::broadcast::Sender<String>,
 }
 
@@ -90,6 +91,7 @@ impl AppState {
             secure_cookies: !cfg.dev_insecure_cookies,
             ceremonies: Mutex::new(HashMap::new()),
             auth_limiter: Mutex::new((Instant::now(), 0)),
+            ip_limiter: Mutex::new(HashMap::new()),
             events: tx,
         })
     }
@@ -97,7 +99,7 @@ impl AppState {
     pub fn put_ceremony(&self, c: Ceremony) -> String {
         let id = random_token(24);
         if let Ok(mut m) = self.ceremonies.lock() {
-            m.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(300));
+            m.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(120));
             m.insert(id.clone(), (Instant::now(), c));
         }
         id
@@ -106,10 +108,10 @@ impl AppState {
     pub fn take_ceremony(&self, id: &str) -> Option<Ceremony> {
         let mut m = self.ceremonies.lock().ok()?;
         let (t, c) = m.remove(id)?;
-        (t.elapsed() < Duration::from_secs(300)).then_some(c)
+        (t.elapsed() < Duration::from_secs(120)).then_some(c)
     }
 
-    /// Global auth endpoint limiter: 30 attempts per minute (single-user system).
+    /// Global backstop for auth endpoints (per-IP limits apply first, see `origin_guard`).
     pub fn auth_rate_ok(&self) -> bool {
         let Ok(mut g) = self.auth_limiter.lock() else {
             return false;
@@ -118,7 +120,24 @@ impl AppState {
             *g = (Instant::now(), 0);
         }
         g.1 += 1;
-        g.1 <= 30
+        g.1 <= 300
+    }
+
+    /// Per-client-IP limiter for auth POSTs: 20 per minute (SEC-13). Behind Caddy the client IP is
+    /// the first `X-Forwarded-For` entry; the API is not reachable except through Caddy.
+    pub fn ip_rate_ok(&self, ip: &str) -> bool {
+        let Ok(mut m) = self.ip_limiter.lock() else {
+            return false;
+        };
+        if m.len() > 10_000 {
+            m.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(60));
+        }
+        let e = m.entry(ip.to_owned()).or_insert((Instant::now(), 0));
+        if e.0.elapsed() > Duration::from_secs(60) {
+            *e = (Instant::now(), 0);
+        }
+        e.1 += 1;
+        e.1 <= 20
     }
 
     pub fn cookie_name(&self) -> &'static str {
@@ -283,6 +302,23 @@ async fn origin_guard(State(st): State<Arc<AppState>>, req: Request, next: Next)
             .is_some_and(|o| o.trim_end_matches('/') == st.origin);
         if !ok {
             return ApiError::forbidden("origin check failed").into_response();
+        }
+        if req.uri().path().starts_with("/api/auth/") {
+            let ip = req
+                .headers()
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .map(|s| s.trim().to_owned())
+                .unwrap_or_else(|| "direct".to_owned());
+            if !st.ip_rate_ok(&ip) {
+                return ApiError::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "rate_limited",
+                    "too many authentication attempts",
+                )
+                .into_response();
+            }
         }
     }
     let mut resp = next.run(req).await;

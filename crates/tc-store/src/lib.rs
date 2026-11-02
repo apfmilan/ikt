@@ -10,6 +10,7 @@
 //! * Ledger rows are idempotent on `(broker, kind, ref)`.
 
 pub mod auth;
+pub mod booking;
 pub mod control;
 pub mod trading;
 
@@ -162,13 +163,13 @@ impl Store {
                 "another engine instance holds the lock".into(),
             ));
         }
-        Ok(EngineLock { _conn: conn })
+        Ok(EngineLock { conn })
     }
 }
 
 /// Holds the engine singleton lock; dropping the connection releases it.
 pub struct EngineLock {
-    _conn: sqlx::MySqlConnection,
+    pub(crate) conn: sqlx::MySqlConnection,
 }
 
 /// Current time truncated to microseconds (DATETIME(6) precision) so values round-trip exactly.

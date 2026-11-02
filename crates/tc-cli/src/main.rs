@@ -34,7 +34,7 @@ enum Cmd {
     },
     /// Apply database migrations (additive only).
     Migrate,
-    /// Print table names / row counts of the configured database (pre-migration inspection).
+    /// Print table names of the configured database (pre-migration inspection).
     DbInspect,
     /// Download public Bitvavo candles to CSV (no API key needed).
     FetchCandles {
@@ -62,6 +62,12 @@ enum Cmd {
         /// Write status + regime edges to the database (requires TC_DATABASE_URL[_FILE]).
         #[arg(long)]
         promote: bool,
+        /// Edge-statistics group the data represents (`bitvavo_eur` or `t212_us_equity`).
+        #[arg(long, default_value = "bitvavo_eur")]
+        market_group: String,
+        /// Asset class recorded for the strategy (`crypto`, `stock`, `etf`).
+        #[arg(long, default_value = "crypto")]
+        asset_class: String,
     },
 }
 
@@ -134,7 +140,20 @@ async fn main() -> Result<()> {
             interval,
             out_dir,
             promote,
-        } => backtest(&strategy, &data, &interval, &out_dir, promote).await,
+            market_group,
+            asset_class,
+        } => {
+            backtest(
+                &strategy,
+                &data,
+                &interval,
+                &out_dir,
+                promote,
+                &market_group,
+                &asset_class,
+            )
+            .await
+        }
     }
 }
 
@@ -255,6 +274,8 @@ async fn backtest(
     interval: &str,
     out_dir: &Path,
     promote: bool,
+    market_group: &str,
+    asset_class: &str,
 ) -> Result<()> {
     if data.is_empty() {
         bail!("--data required");
@@ -368,7 +389,7 @@ async fn backtest(
                     name: fam.clone(),
                     version: 1,
                     status: status.into(),
-                    asset_class: "crypto".into(),
+                    asset_class: asset_class.into(),
                     report: serde_json::json!({ "oos": { "trades": m.trades, "sharpe": m.sharpe, "profit_factor": m.profit_factor, "expectancy_r": m.expectancy_r, "max_dd_pct": m.max_drawdown * 100.0 }, "promotion": promo, "dsr": dsr }),
                     updated_at: Utc::now(),
                 })
@@ -377,7 +398,7 @@ async fn backtest(
                 .iter()
                 .map(|e| tc_store::trading::EdgeRow {
                     strategy: fam.clone(),
-                    market_group: "bitvavo_eur".into(),
+                    market_group: market_group.into(),
                     regime: e.regime.as_str().into(),
                     trades: e.trades as i32,
                     mean_gross_bps: e.mean_gross_bps,

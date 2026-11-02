@@ -29,7 +29,7 @@ export function EmergencyStop({ mode, onChanged }: { mode?: Mode; onChanged: () 
     setBusy(m);
     setErr(null);
     try {
-      const token = m === "normal" ? await stepUp("kill_release") : undefined;
+      const token = m === "normal" ? await stepUp("kill_release") : m === "flatten" ? await stepUp("flatten") : undefined;
       await api.kill(m, token);
       onChanged();
       setOpen(false);

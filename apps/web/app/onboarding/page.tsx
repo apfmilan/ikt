@@ -196,7 +196,7 @@ function CredentialStep({
 
   async function sendAttest() {
     try {
-      await api.attest(broker);
+      await api.attest(broker, await stepUp("credentials_change"));
       onChanged();
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });

@@ -73,7 +73,11 @@ pub async fn cycle(eng: &Engine) {
                 abstained += 1
             }
             Ok(None) => {}
-            Err(e) => warn!(instrument = %id, error = %e, "decision failed"),
+            Err(e) => {
+                warn!(instrument = %id, error = %e, "decision failed");
+                // Retry this bar on the next cycle.
+                eng.last_decision_bar.lock().await.remove(&id);
+            }
         }
     }
     let live: Vec<&str> = strategies
@@ -538,7 +542,7 @@ pub async fn broker_cash_huf(eng: &Engine, broker: Broker) -> Decimal {
     snap.and_then(|s| {
         s.per_broker
             .get(broker.as_str())
-            .and_then(|b| b.get("cash_huf"))
+            .and_then(|b| b.get("cash_available_huf"))
             .and_then(|v| v.as_str())
             .and_then(|v| v.parse().ok())
     })
@@ -651,7 +655,7 @@ pub async fn build_snapshot(
         .unwrap_or_default();
     let liquidity = quote.and_then(|q| q.volume_quote_24h);
     let market = quote.map(|q| MarketData {
-        quote_ts: q.ts.max(now - Duration::seconds(1)).min(now),
+        quote_ts: q.ts.min(now),
         bid: q.bid,
         ask: q.ask,
         liquidity_notional: liquidity,
@@ -692,27 +696,25 @@ pub async fn build_snapshot(
     });
     let snap = eng.store.latest_snapshot().await.ok().flatten();
     let day0 = budapest_midnight(now);
-    let week0 = day0
-        - Duration::days(
-            now.with_timezone(&Budapest)
-                .weekday()
-                .num_days_from_monday() as i64,
-        );
-    let nav_day = eng
-        .store
-        .snapshot_at(day0)
-        .await
-        .ok()
-        .flatten()
-        .map(|s| s.nav_unit);
-    let nav_week = eng
-        .store
-        .snapshot_at(week0)
-        .await
-        .ok()
-        .flatten()
-        .map(|s| s.nav_unit);
+    let week0 = week_start(now);
+    // Baselines: last snapshot before the boundary, else the first one after it (never "no loss").
+    let nav_day = baseline(eng, day0).await;
+    let nav_week = baseline(eng, week0).await;
     let nav_now = snap.as_ref().map(|s| s.nav_unit).unwrap_or_default();
+    let mut ccys = std::collections::HashMap::new();
+    for r in eng
+        .store
+        .active_and_recent_intents(now - Duration::minutes(10))
+        .await
+        .unwrap_or_default()
+    {
+        if !ccys.contains_key(&r.intent.instrument) {
+            if let Some(i) = market::instrument(eng, &r.intent.instrument).await {
+                ccys.insert(r.intent.instrument.clone(), i.quote_currency);
+            }
+        }
+    }
+    let ccy_of = |id: &InstrumentId| ccys.get(id).copied();
     let positions = exposures(eng, fx.as_ref()).await;
     let intents = eng
         .store
@@ -726,9 +728,18 @@ pub async fn build_snapshot(
             state: r.state,
             class: OrderClass::from_reason(r.intent.reason),
             created_at: r.intent.created_at,
-            notional_huf: (r.intent.quantity - r.filled_quantity)
-                * r.intent.reference_price
-                * eur_huf,
+            notional_huf: ccy_of(&r.intent.instrument)
+                .and_then(|c| {
+                    fx.as_ref().and_then(|f| {
+                        f.to_huf(
+                            (r.intent.quantity - r.filled_quantity) * r.intent.reference_price,
+                            c,
+                        )
+                    })
+                })
+                .unwrap_or(
+                    (r.intent.quantity - r.filled_quantity) * r.intent.reference_price * eur_huf,
+                ),
         })
         .collect();
     let closed_trades = eng
@@ -756,10 +767,19 @@ pub async fn build_snapshot(
             r.intent.side == Side::Buy
                 && matches!(
                     r.state,
-                    tc_core::OrderState::Pending | tc_core::OrderState::Submitting
+                    tc_core::OrderState::Pending
+                        | tc_core::OrderState::Submitting
+                        | tc_core::OrderState::Unknown
+                        | tc_core::OrderState::Open
+                        | tc_core::OrderState::PartiallyFilled
                 )
         })
-        .map(|r| r.intent.quantity * r.intent.reference_price * eur_huf)
+        .map(|r| {
+            let n = (r.intent.quantity - r.filled_quantity) * r.intent.reference_price;
+            ccy_of(&r.intent.instrument)
+                .and_then(|c| fx.as_ref().and_then(|f| f.to_huf(n, c)))
+                .unwrap_or(n * eur_huf)
+        })
         .sum();
     let account_ts = eng
         .last_account_sync
@@ -979,8 +999,7 @@ pub async fn long_term_invest(eng: &Engine) {
         .await;
         return;
     };
-    let month_start =
-        budapest_midnight(now) - Duration::days(now.with_timezone(&Budapest).day0() as i64);
+    let month_start = month_start(now);
     let done = eng
         .store
         .active_and_recent_intents(month_start)
@@ -988,7 +1007,14 @@ pub async fn long_term_invest(eng: &Engine) {
         .unwrap_or_default()
         .iter()
         .any(|r| {
-            r.intent.reason == IntentReason::LongTermInvest && r.intent.created_at >= month_start
+            r.intent.reason == IntentReason::LongTermInvest
+                && r.intent.created_at >= month_start
+                && !matches!(
+                    r.state,
+                    tc_core::OrderState::Aborted
+                        | tc_core::OrderState::Rejected
+                        | tc_core::OrderState::NotPlaced
+                )
         });
     if done {
         return;
@@ -1012,10 +1038,10 @@ pub async fn long_term_invest(eng: &Engine) {
             continue;
         };
         let _ = eod.set_symbol(id.clone(), &sym);
-        let Some(price) = market::last_price(eng, &id).await.or({
-            let _ = market::refresh_candles(eng, &id, Interval::D1).await;
-            None
-        }) else {
+        if let Err(e) = market::refresh_candles(eng, &id, Interval::D1).await {
+            warn!(instrument = %id, error = %e, "ETF price refresh failed");
+        }
+        let Some(price) = market::last_price(eng, &id).await else {
             continue;
         };
         let Some(huf_per) = fx.as_ref().and_then(|f| f.huf_per(inst.quote_currency)) else {
@@ -1090,4 +1116,86 @@ pub async fn long_term_invest(eng: &Engine) {
         json!({ "budget_huf": budget_huf }),
     )
     .await;
+}
+
+/// Monday 00:00 Europe/Budapest of the current week, as UTC (DST-correct).
+pub fn week_start(now: chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
+    use chrono::TimeZone;
+    let local = now.with_timezone(&Budapest).date_naive();
+    let monday = local - Duration::days(local.weekday().num_days_from_monday() as i64);
+    Budapest
+        .from_local_datetime(&monday.and_time(chrono::NaiveTime::MIN))
+        .earliest()
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or(now - Duration::days(7))
+}
+
+/// First day of the current month 00:00 Europe/Budapest, as UTC (DST-correct).
+pub fn month_start(now: chrono::DateTime<Utc>) -> chrono::DateTime<Utc> {
+    use chrono::TimeZone;
+    let local = now.with_timezone(&Budapest).date_naive();
+    let first = local.with_day(1).unwrap_or(local);
+    Budapest
+        .from_local_datetime(&first.and_time(chrono::NaiveTime::MIN))
+        .earliest()
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or(now - Duration::days(31))
+}
+
+/// NAV per unit at a period boundary: last snapshot before it, else the first one after it.
+async fn baseline(eng: &Engine, t: chrono::DateTime<Utc>) -> Option<Decimal> {
+    match eng.store.snapshot_at(t).await {
+        Ok(Some(s)) => Some(s.nav_unit),
+        _ => eng.store.first_snapshot_since(t).await.ok().flatten(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn period_starts_are_dst_correct() {
+        // 2026-11-02 is in CET (UTC+1): local midnight = 23:00 UTC the previous day.
+        let now = Utc
+            .with_ymd_and_hms(2026, 11, 2, 10, 0, 0)
+            .single()
+            .expect("t");
+        assert_eq!(
+            month_start(now),
+            Utc.with_ymd_and_hms(2026, 10, 31, 23, 0, 0)
+                .single()
+                .expect("t")
+        );
+        assert_eq!(
+            week_start(now),
+            Utc.with_ymd_and_hms(2026, 11, 1, 23, 0, 0)
+                .single()
+                .expect("t")
+        );
+        // Summer time (UTC+2): 1 July local midnight = 30 June 22:00 UTC.
+        let summer = Utc
+            .with_ymd_and_hms(2026, 7, 15, 12, 0, 0)
+            .single()
+            .expect("t");
+        assert_eq!(
+            month_start(summer),
+            Utc.with_ymd_and_hms(2026, 6, 30, 22, 0, 0)
+                .single()
+                .expect("t")
+        );
+    }
+
+    #[test]
+    fn market_groups() {
+        assert_eq!(
+            market_group(&InstrumentId::new(Broker::Bitvavo, "BTC-EUR")),
+            "bitvavo_eur"
+        );
+        assert_eq!(
+            market_group(&InstrumentId::new(Broker::Trading212, "AAPL_US_EQ")),
+            "t212_us_equity"
+        );
+    }
 }

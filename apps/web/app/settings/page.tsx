@@ -172,10 +172,10 @@ export default function SettingsPage() {
             size="sm"
             variant="ghost"
             onClick={() =>
-              api
-                .pair()
+              stepUp("device_add")
+                .then((t) => api.pair(t))
                 .then(setPairing)
-                .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
+                .catch((e: unknown) => setErr(e instanceof ApiError ? e.message : friendlyWebAuthnError(e)))
             }
           >
             <Plus size={15} /> Új eszköz

@@ -18,7 +18,9 @@ export type StepUpAction =
   | "kill_release"
   | "credentials_change"
   | "device_remove"
-  | "plan_change";
+  | "plan_change"
+  | "flatten"
+  | "device_add";
 
 export interface ApiErrorBody {
   error: { code: string; message: string };

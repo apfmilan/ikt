@@ -251,3 +251,95 @@ async fn engine_singleton_lock() {
     );
     drop(a);
 }
+
+#[tokio::test]
+#[ignore = "needs TC_TEST_DATABASE_URL"]
+async fn fill_booking_is_atomic_and_idempotent() {
+    use tc_store::booking::{FillCommit, LedgerEntry, PositionChange};
+    use tc_store::trading::PositionRow;
+    let Some(s) = store().await else { return };
+    let i = intent("bitvavo:ETH-EUR");
+    s.insert_intent(&i, "s1_trend_vol", &serde_json::json!({})).await.expect("insert");
+    s.transition_intent(i.id, OrderState::Submitting, &IntentUpdate::default()).await.expect("submit");
+    let pos = PositionRow {
+        instrument: i.instrument.clone(),
+        quantity: dec!(0.0001),
+        avg_price: dec!(3000),
+        opened_at: now_micros(),
+        stop_price: Some(dec!(2900)),
+        take_profit: None,
+        initial_risk: Some(dec!(100)),
+        high_watermark: dec!(3000),
+        strategy: "s1_trend_vol".into(),
+        long_term: false,
+        bars_held: 0,
+        partial_taken: false,
+        stop_intent_id: None,
+        decision_id: None,
+    };
+    let fill_id = format!("ord-{}@0.0001", Uuid::new_v4());
+    let commit = FillCommit {
+        broker: Broker::Bitvavo,
+        fill_id: fill_id.clone(),
+        intent_id: i.id,
+        instrument: i.instrument.clone(),
+        side: Side::Buy,
+        quantity: dec!(0.0001),
+        price: dec!(3000),
+        fee: dec!(0.00075),
+        fee_currency: Some("EUR".into()),
+        ts: now_micros(),
+        intent_to: Some(OrderState::PartiallyFilled),
+        intent_update: IntentUpdate { filled_quantity: Some(dec!(0.0001)), avg_fill_price: Some(dec!(3000)), ..Default::default() },
+        position: PositionChange::Upsert(pos),
+        trade: None,
+        ledger: vec![LedgerEntry {
+            ts: now_micros(),
+            broker: "bitvavo".into(),
+            kind: "fee".into(),
+            amount: dec!(-0.00075),
+            currency: "EUR".into(),
+            amount_huf: dec!(-0.3),
+            fx_rate: dec!(400),
+            r#ref: format!("{fill_id}:fee"),
+        }],
+    };
+    // Submitting → PartiallyFilled is valid; booking writes everything at once.
+    assert!(s.commit_fill(&commit).await.expect("commit"));
+    // Same fill id again: no-op (no double booking).
+    assert!(!s.commit_fill(&commit).await.expect("dup"));
+    let p = s.positions().await.expect("positions").into_iter().find(|p| p.instrument == i.instrument).expect("position");
+    assert_eq!(p.quantity, dec!(0.0001));
+    let row = s.intent(i.id).await.expect("intent").expect("row");
+    assert_eq!(row.state, OrderState::PartiallyFilled);
+    assert_eq!(row.filled_quantity, dec!(0.0001));
+    // An invalid transition rolls back the whole booking (fill row included).
+    let bad = FillCommit { fill_id: format!("{fill_id}-x"), intent_to: Some(OrderState::Submitting), ..commit.clone() };
+    assert!(s.commit_fill(&bad).await.is_err());
+    assert!(s.commit_fill(&FillCommit { intent_to: None, ..bad.clone() }).await.expect("retry ok"));
+    s.delete_position(&i.instrument).await.expect("cleanup");
+}
+
+#[tokio::test]
+#[ignore = "needs TC_TEST_DATABASE_URL"]
+async fn stale_pending_is_aborted_and_ledger_cursor_counts_late_deposits() {
+    let Some(s) = store().await else { return };
+    let i = intent("bitvavo:ADA-EUR");
+    s.insert_intent(&i, "x", &serde_json::json!({})).await.expect("insert");
+    let aborted = s.abort_stale_pending(now_micros() + Duration::seconds(1)).await.expect("abort");
+    assert!(aborted.contains(&i.id));
+    assert_eq!(s.intent(i.id).await.expect("i").expect("row").state, OrderState::Aborted);
+
+    let before = s.max_ledger_id().await.expect("max");
+    // A deposit whose broker timestamp is a week old still counts (cursor is by ledger id).
+    let old_ts = now_micros() - Duration::days(7);
+    s.ledger_append(old_ts, "bitvavo", "deposit", dec!(125), "EUR", dec!(50000), dec!(400), &format!("late-{}", Uuid::new_v4()), None)
+        .await
+        .expect("append");
+    let (flows, max_id) = s.flows_after_ledger_id(before).await.expect("flows");
+    assert_eq!(flows, dec!(50000));
+    assert!(max_id > before);
+    let (none, same) = s.flows_after_ledger_id(max_id).await.expect("flows2");
+    assert_eq!(none, dec!(0));
+    assert_eq!(same, max_id);
+}

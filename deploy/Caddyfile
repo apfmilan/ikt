@@ -13,7 +13,15 @@
 
 	log {
 		output stdout
-		format json
+		# Step-up tokens travel in a header; never write them (or cookies) to access logs.
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Stepup-Token delete
+				request>headers>Cookie delete
+				resp_headers>Set-Cookie delete
+			}
+		}
 	}
 
 	# Security headers for every response.

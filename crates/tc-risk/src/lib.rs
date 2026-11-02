@@ -468,7 +468,10 @@ impl RiskEngine {
                 Some(rate)
             }
             _ => {
-                veto!(VetoCode::DataMissing, "no FX rate to HUF".into());
+                // Stale or missing data never blocks a protective exit (spec §2).
+                if entry {
+                    veto!(VetoCode::DataMissing, "no FX rate to HUF".into());
+                }
                 None
             }
         };
@@ -495,7 +498,11 @@ impl RiskEngine {
         // 7-9. Instrument eligibility, market hours, new listing.
         let inst = s.instrument.as_ref();
         match inst {
-            None => veto!(VetoCode::DataMissing, "no instrument metadata".into()),
+            None => {
+                if entry {
+                    veto!(VetoCode::DataMissing, "no instrument metadata".into());
+                }
+            }
             Some(i) => {
                 if entry {
                     if !i.tradable || !i.eligible {
@@ -646,6 +653,12 @@ impl RiskEngine {
                     VetoCode::InFlight,
                     format!("intent in state {}", i.state.as_str())
                 );
+            } else if entry
+                && i.side == Side::Buy
+                && matches!(i.state, OrderState::Open | OrderState::PartiallyFilled)
+            {
+                // A resting buy on the instrument blocks another entry regardless of age.
+                veto!(VetoCode::InFlight, "entry order already resting".into());
             } else if i.side == req.side && i.state == OrderState::Open && !entry {
                 veto!(
                     VetoCode::InFlight,
@@ -709,6 +722,19 @@ impl RiskEngine {
 
         // Sizing checks need FX and instrument metadata; bail if missing.
         let (Some(fx), Some(inst)) = (fx, inst) else {
+            if v.is_empty() && !entry {
+                // Protective exit without FX/metadata: allowed unchanged (the venue enforces
+                // its own minimums); sizing checks below are entry-only or need metadata.
+                return Verdict::Allow {
+                    quantity: req.quantity,
+                };
+            }
+            if v.is_empty() {
+                veto!(
+                    VetoCode::DataMissing,
+                    "FX or instrument metadata missing".into()
+                );
+            }
             return Verdict::Veto { vetoes: v };
         };
         let price_huf = req.price * fx;

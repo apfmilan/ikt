@@ -55,14 +55,11 @@ COPY apps/web ./
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build \
  && test -f out/index.html
-# CSP: if the web build emits out/_csp/script-hashes.txt (one CSP source per line, e.g.
-# 'sha256-AbC...='), use those hashes; otherwise fall back to 'unsafe-inline' (documented gap).
+# CSP: the web build emits out/_csp/script-hashes.txt (one 'sha256-…' per line). The build
+# fails without it, so the CSP never silently falls back to 'unsafe-inline'.
 RUN set -eu; \
-    if [ -s out/_csp/script-hashes.txt ]; then \
-      SCRIPT_SRC="'self' $(tr '\n' ' ' < out/_csp/script-hashes.txt)"; \
-    else \
-      SCRIPT_SRC="'self' 'unsafe-inline'"; \
-    fi; \
+    test -s out/_csp/script-hashes.txt; \
+    SCRIPT_SRC="'self' $(tr '\n' ' ' < out/_csp/script-hashes.txt)"; \
     printf 'header Content-Security-Policy "default-src '"'"'self'"'"'; script-src %s; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; img-src '"'"'self'"'"' data: blob:; font-src '"'"'self'"'"'; connect-src '"'"'self'"'"' wss://{host}; manifest-src '"'"'self'"'"'; worker-src '"'"'self'"'"'; object-src '"'"'none'"'"'; base-uri '"'"'none'"'"'; form-action '"'"'self'"'"'; frame-ancestors '"'"'none'"'"'; upgrade-insecure-requests"\n' "$SCRIPT_SRC" > /web/csp.caddy; \
     cat /web/csp.caddy
 

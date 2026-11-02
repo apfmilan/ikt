@@ -103,7 +103,7 @@ export const api = {
     request<ChallengeResponse>("/auth/stepup/start", { method: "POST", body: { action } }),
   stepupFinish: (challenge_id: string, action: StepUpAction, credential: unknown) =>
     request<StepUpToken>("/auth/stepup/finish", { method: "POST", body: { challenge_id, action, credential } }),
-  pair: () => request<PairingCode>("/auth/pair", { method: "POST", body: {} }),
+  pair: (stepupToken: string) => request<PairingCode>("/auth/pair", { method: "POST", body: {}, stepupToken }),
   pairStart: (pairing_code: string, device_name: string) =>
     request<ChallengeResponse>("/auth/pair/start", { method: "POST", body: { pairing_code, device_name } }),
   devices: () => request<Device[]>("/auth/devices"),
@@ -149,8 +149,8 @@ export const api = {
     stepupToken?: string,
   ) => request<{ stored: boolean }>("/onboarding/credentials", { method: "POST", body, stepupToken }),
   verify: (broker: string) => request<{ command_id: string }>("/onboarding/verify", { method: "POST", body: { broker } }),
-  attest: (broker: string) =>
-    request<{ ok: boolean }>("/onboarding/attest", { method: "POST", body: { broker, withdraw_disabled: true } }),
+  attest: (broker: string, stepupToken: string) =>
+    request<{ ok: boolean }>("/onboarding/attest", { method: "POST", body: { broker, withdraw_disabled: true }, stepupToken }),
   onboardingRisk: (config: RiskConfig) => request<{ ok: boolean }>("/onboarding/risk", { method: "POST", body: config }),
   authorize: (brokers: string[], stepupToken: string) =>
     request<{ ok: boolean }>("/onboarding/authorize", { method: "POST", body: { brokers }, stepupToken }),

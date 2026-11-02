@@ -114,6 +114,24 @@ pub async fn verify(eng: &Engine, broker: &str) -> serde_json::Value {
                     status.scopes_ok = r.authenticated && r.can_read_account;
                     status.account_currency = r.account_currency.map(|c| c.to_string());
                     notes.extend(r.notes);
+                    // Withdrawal permission probe (POST /withdrawal with amount 0 to an invalid
+                    // address). It needs the live guard armed; otherwise the user must attest.
+                    if eng.live_armed {
+                        match c.probe_withdrawal_permission().await {
+                            Ok(tc_broker_bitvavo::WithdrawProbe::NoWithdrawPermission) => {
+                                status.can_withdraw = Some(false)
+                            }
+                            Ok(tc_broker_bitvavo::WithdrawProbe::WithdrawPossible) => {
+                                status.can_withdraw = Some(true)
+                            }
+                            Ok(tc_broker_bitvavo::WithdrawProbe::Inconclusive(m)) => {
+                                notes.push(format!("withdrawal check inconclusive: {m}"))
+                            }
+                            Err(e) => notes.push(format!("withdrawal check failed: {e}")),
+                        }
+                    } else {
+                        notes.push("withdrawal check runs once TC_LIVE_TRADING=enabled; until then confirm it manually".into());
+                    }
                     if let Ok(acc) = c.account().await {
                         notes.push(format!("{} balance line(s) read", acc.cash.len()));
                     }

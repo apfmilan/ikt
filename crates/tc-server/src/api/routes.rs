@@ -670,16 +670,22 @@ async fn apply_risk(st: &AppState, new: RiskConfig, by: &str) -> ApiResult<Value
         .map_err(|e| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "hard_limit", e.0))?;
     let (cur, exists) = risk_config(st).await?;
     let now = Utc::now();
+    // Live authorization is bound to the config hash, so any change requires re-authorization.
+    st.store
+        .revoke_live(None, "risk limits changed", by)
+        .await?;
     if exists && cur.is_loosening(&new) {
         let at = now + Duration::hours(24);
         st.store.put_config("risk", &new, at, by).await?;
-        st.store
-            .revoke_live(None, "risk limits loosened", by)
-            .await?;
         Ok(json!({ "ok": true, "effective_at": at, "live_revoked": true }))
     } else {
         st.store.put_config("risk", &new, now, by).await?;
-        Ok(json!({ "ok": true, "effective_at": now }))
+        // A tightening must also override any loosening still scheduled for later: re-write it at
+        // that time so the newest (stricter) intent wins when the pending row becomes effective.
+        if let Some((_, at)) = st.store.pending_config::<RiskConfig>("risk", now).await? {
+            st.store.put_config("risk", &new, at, by).await?;
+        }
+        Ok(json!({ "ok": true, "effective_at": now, "live_revoked": true }))
     }
 }
 
@@ -728,8 +734,13 @@ pub async fn kill(
         None => "global".to_owned(),
     };
     let mut actor = s.actor();
+    // Stopping (freeze / reduce_only) needs only a session; selling everything (flatten) and
+    // releasing the switch need a fresh passkey assertion.
     if mode == KillMode::Normal {
         let pk = require_stepup(&st, &headers, "kill_release").await?;
+        actor = format!("passkey:{pk}");
+    } else if mode == KillMode::Flatten {
+        let pk = require_stepup(&st, &headers, "flatten").await?;
         actor = format!("passkey:{pk}");
     }
     st.store.set_kill(&scope, mode, "user", &actor).await?;
@@ -941,6 +952,8 @@ pub async fn credentials(
             )
             .await?;
     }
+    // A new key must be re-verified: the previous no-withdrawal attestation does not carry over.
+    st.store.reset_attestation(broker).await?;
     if let Ok(br) = Broker::parse(broker) {
         st.store
             .revoke_live(Some(br), "credentials changed", &actor)
@@ -990,13 +1003,20 @@ pub async fn verify(
 
 pub async fn attest(
     State(st): State<Arc<AppState>>,
-    s: Session,
+    _s: Session,
+    headers: HeaderMap,
     Json(b): Json<BrokerBody>,
 ) -> ApiResult<Json<Value>> {
     if b.withdraw_disabled != Some(true) {
         return Err(ApiError::bad_request("withdraw_disabled must be true"));
     }
-    st.store.attest_no_withdraw(&b.broker, &s.actor()).await?;
+    if !["trading212", "bitvavo"].contains(&b.broker.as_str()) {
+        return Err(ApiError::bad_request("unknown broker"));
+    }
+    let pk = require_stepup(&st, &headers, "credentials_change").await?;
+    st.store
+        .attest_no_withdraw(&b.broker, &format!("passkey:{pk}"))
+        .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1078,8 +1098,16 @@ pub async fn push_subscribe(
 ) -> ApiResult<Json<Value>> {
     let url =
         url::Url::parse(&b.endpoint).map_err(|_| ApiError::bad_request("invalid endpoint"))?;
-    if url.scheme() != "https" || b.endpoint.len() > 1024 {
-        return Err(ApiError::bad_request("endpoint must be https"));
+    // Only real browser push services (prevents SSRF from the engine, SEC-16).
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let allowed = host.ends_with(".push.apple.com")
+        || host == "fcm.googleapis.com"
+        || host.ends_with(".notify.windows.com")
+        || host == "updates.push.services.mozilla.com";
+    if url.scheme() != "https" || b.endpoint.len() > 1024 || !allowed {
+        return Err(ApiError::bad_request(
+            "endpoint must be an https browser push service",
+        ));
     }
     let k = b
         .keys

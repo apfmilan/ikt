@@ -66,6 +66,8 @@ pub struct Engine {
     pub public_bitvavo: Arc<tc_broker_bitvavo::BitvavoClient>,
     pub fx: RwLock<Option<FxTable>>,
     pub regimes: Mutex<HashMap<InstrumentId, RegimeTracker>>,
+    /// Last bar each regime tracker consumed (trackers advance once per closed bar).
+    pub regime_bar: Mutex<HashMap<InstrumentId, DateTime<Utc>>>,
     pub listed_at: Mutex<HashMap<InstrumentId, DateTime<Utc>>>,
     pub universe: RwLock<Vec<InstrumentId>>,
     pub mode: RwLock<Mode>,
@@ -139,7 +141,7 @@ pub async fn run(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     // Single writer: wait for the lock (another engine may still be shutting down).
-    let _lock = loop {
+    let mut lock = loop {
         match store.acquire_engine_lock().await {
             Ok(l) => break l,
             Err(e) => {
@@ -189,6 +191,7 @@ pub async fn run(
         public_bitvavo,
         fx: RwLock::new(None),
         regimes: Mutex::new(HashMap::new()),
+        regime_bar: Mutex::new(HashMap::new()),
         listed_at: Mutex::new(HashMap::new()),
         universe: RwLock::new(Vec::new()),
         mode: RwLock::new(Mode::Recovery),
@@ -260,6 +263,13 @@ pub async fn run(
             }
             _ = t_cmd.tick() => exec::process_commands(&eng).await,
             _ = t_heartbeat.tick() => {
+                // Single-writer guarantee: if MySQL dropped our named lock, stop immediately so a
+                // second engine can never send orders concurrently (Docker restarts this one).
+                if !Store::lock_still_held(&mut lock).await {
+                    tc_broker::live::disarm();
+                    error!("engine singleton lock lost; exiting");
+                    anyhow::bail!("engine lock lost");
+                }
                 heartbeat(&eng).await;
                 notify::daily_summary_if_due(&eng).await;
             }

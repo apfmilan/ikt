@@ -11,6 +11,7 @@ use web_push::{ContentEncoding, SubscriptionInfo, VapidSignatureBuilder, WebPush
 
 use crate::Engine;
 
+#[derive(Clone)]
 pub struct Push {
     private_key_b64: String,
     subject: String,
@@ -45,6 +46,7 @@ impl Push {
         let key = std::fs::read_to_string(path?).ok()?.trim().to_owned();
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .ok()?;
         Some(Push {
@@ -114,17 +116,22 @@ pub async fn send(eng: &Engine, category: &str, title: &str, body: &str) {
     }
     let payload =
         json!({ "title": title, "body": body, "category": category, "url": "/" }).to_string();
-    for sub in eng.store.push_subs().await.unwrap_or_default() {
-        match push.deliver(&sub, payload.as_bytes()).await {
-            Ok(404) | Ok(410) => {
-                info!(device = %sub.device_name, "push subscription expired; removing");
-                let _ = eng.store.remove_push_sub(&sub.endpoint).await;
+    // Delivery runs in the background so trading paths (execute, flatten) never wait on it.
+    let subs = eng.store.push_subs().await.unwrap_or_default();
+    let (push, store) = (push.clone(), eng.store.clone());
+    tokio::spawn(async move {
+        for sub in subs {
+            match push.deliver(&sub, payload.as_bytes()).await {
+                Ok(404) | Ok(410) => {
+                    info!(device = %sub.device_name, "push subscription expired; removing");
+                    let _ = store.remove_push_sub(&sub.endpoint).await;
+                }
+                Ok(code) if (200..300).contains(&code) => {}
+                Ok(code) => warn!(code, device = %sub.device_name, "push rejected"),
+                Err(e) => warn!(error = %e, "push failed"),
             }
-            Ok(code) if (200..300).contains(&code) => {}
-            Ok(code) => warn!(code, device = %sub.device_name, "push rejected"),
-            Err(e) => warn!(error = %e, "push failed"),
         }
-    }
+    });
 }
 
 /// Errors / critical risk alerts (also audited).
