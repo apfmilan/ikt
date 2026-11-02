@@ -1,0 +1,68 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+tc-core = { path = "crates/tc-core" }
+tc-plan = { path = "crates/tc-plan" }
+tc-strategy = { path = "crates/tc-strategy" }
+tc-risk = { path = "crates/tc-risk" }
+tc-backtest = { path = "crates/tc-backtest" }
+tc-broker = { path = "crates/tc-broker" }
+tc-broker-bitvavo = { path = "crates/tc-broker-bitvavo" }
+tc-broker-t212 = { path = "crates/tc-broker-t212" }
+tc-marketdata = { path = "crates/tc-marketdata" }
+tc-vault = { path = "crates/tc-vault" }
+tc-store = { path = "crates/tc-store" }
+tc-engine = { path = "crates/tc-engine" }
+
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+aes-gcm = "0.10"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+hex = "0.4"
+hmac = "0.12"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust_decimal = { version = "1.36", features = ["serde-with-str", "maths"] }
+rust_decimal_macros = "1.36"
+secrecy = { version = "0.10", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "mysql", "chrono", "rust_decimal", "uuid", "json", "migrate", "macros"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "set-header", "limit", "timeout", "compression-gzip"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+webauthn-rs = "0.5"
+web-push = { version = "0.11", default-features = false }
+wiremock = "0.6"
+zeroize = { version = "1", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+float_cmp = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

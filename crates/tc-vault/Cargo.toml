@@ -1,0 +1,21 @@
+[package]
+name = "tc-vault"
+description = "Sealed broker credentials: X25519 + HKDF-SHA256 + AES-256-GCM. API seals, only the engine opens."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aes-gcm.workspace = true
+base64.workspace = true
+rand.workspace = true
+secrecy.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+hkdf = "0.12"
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+
+[lints]
+workspace = true

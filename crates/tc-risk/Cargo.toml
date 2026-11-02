@@ -1,0 +1,20 @@
+[package]
+name = "tc-risk"
+description = "Deterministic pre-trade risk engine with absolute veto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tc-core.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
+
+[lints]
+workspace = true

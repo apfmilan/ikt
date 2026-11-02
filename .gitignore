@@ -1,0 +1,16 @@
+/target
+**/node_modules
+/apps/web/.next
+/apps/web/out
+/apps/desktop/src-tauri/target
+/apps/desktop/src-tauri/gen
+/data/candles/*.csv
+/deploy/secrets/*
+!/deploy/secrets/README.md
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+/target/backtests
+.DS_Store
