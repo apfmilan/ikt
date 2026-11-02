@@ -1,0 +1,28 @@
+[package]
+name = "tc-store"
+description = "MySQL persistence (SQLx): migrations, intents state machine, ledger, audit chain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tc-core.workspace = true
+tc-risk.workspace = true
+chrono.workspace = true
+hex.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
+
+[lints]
+workspace = true

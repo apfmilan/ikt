@@ -508,7 +508,7 @@ impl RiskEngine {
 
             // 12. Loss chasing.
             let mut trades: Vec<&ClosedTrade> = s.closed_trades.iter().collect();
-            trades.sort_by(|a, b| b.closed_at.cmp(&a.closed_at));
+            trades.sort_by_key(|t| std::cmp::Reverse(t.closed_at));
             let streak = trades.iter().take_while(|t| t.net_pnl_huf < Decimal::ZERO).count() as u32;
             if streak >= c.loss_streak {
                 if let Some(last) = trades.first() {

@@ -1,0 +1,18 @@
+# Keep the build context small and free of secrets.
+.git
+.github
+.claude
+target
+**/target
+**/node_modules
+apps/web/.next
+apps/web/out
+apps/desktop
+deploy/secrets
+data
+docs
+.env
+.env.*
+*.pem
+*.key
+rust-toolchain.toml

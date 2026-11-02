@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS tc_audit_log (
   ts DATETIME(6) NOT NULL,
   actor VARCHAR(64) NOT NULL,
   action VARCHAR(64) NOT NULL,
-  detail JSON NOT NULL,
+  detail MEDIUMTEXT NOT NULL,          -- exact canonical JSON text that was hashed
   prev_hash BINARY(32) NOT NULL,
   hash BINARY(32) NOT NULL,
   KEY ix_tc_audit_ts (ts)

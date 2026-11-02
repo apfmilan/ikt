@@ -1,0 +1,183 @@
+# Trading Center production stack (ADR-0001: api + engine roles from one image).
+# Usage: cp .env.example .env && edit; deploy/scripts/generate-secrets.sh; docker compose up -d
+# Only Caddy publishes ports. Docker-published ports bypass ufw, so no other service has `ports:`.
+name: trading-center
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+x-server-image: &server-image
+  image: ${TC_IMAGE:-trading-center/server}:${TC_IMAGE_TAG:-latest}
+  build:
+    context: .
+    target: server
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --sql-mode=STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+      - --default-time-zone=+00:00
+      - --local-infile=0
+      - --skip-name-resolve
+      - --max-connections=60
+      - --innodb-buffer-pool-size=256M
+    environment:
+      MYSQL_DATABASE: trading_center
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+    secrets: [mysql_root_password, mysql_app_password, mysql_migrate_password]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./deploy/mysql/init:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    healthcheck:
+      # mysqladmin ping exits 0 when the server answers, even without credentials.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  migrate:
+    <<: [*hardening, *server-image]
+    restart: "no"
+    command: ["/usr/local/bin/tc", "migrate"]
+    environment:
+      TC_DATABASE_URL_FILE: /run/secrets/database_url_migrate
+      TC_LOG: ${TC_LOG:-info}
+    secrets: [database_url_migrate]
+    networks: [backend]
+    mem_limit: 128m
+    depends_on:
+      mysql: { condition: service_healthy }
+
+  api:
+    <<: [*hardening, *server-image]
+    command: ["/usr/local/bin/tc-server", "--role", "api"]
+    environment:
+      TC_ROLE: api
+      TC_BIND: 0.0.0.0:8080
+      TC_DATABASE_URL_FILE: /run/secrets/database_url
+      TC_RP_ID: ${TC_DOMAIN:?set TC_DOMAIN in .env}
+      TC_RP_ORIGIN: https://${TC_DOMAIN}
+      TC_ENGINE_PUBLIC_KEY_FILE: /run/secrets/engine_public_key
+      TC_VAPID_PUBLIC_KEY_FILE: /run/secrets/vapid_public_key
+      TC_LOG: ${TC_LOG:-info}
+    secrets: [database_url, engine_public_key, vapid_public_key]
+    # edge: reachable by Caddy; backend: MySQL. Both internal => the API has no internet egress.
+    networks: [edge, backend]
+    mem_limit: 256m
+    pids_limit: 256
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/tc-server", "healthcheck", "--url", "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  engine:
+    <<: [*hardening, *server-image]
+    command: ["/usr/local/bin/tc-server", "--role", "engine"]
+    environment:
+      TC_ROLE: engine
+      TC_BIND: 127.0.0.1:9090
+      TC_DATABASE_URL_FILE: /run/secrets/database_url
+      TC_ENGINE_SECRET_KEY_FILE: /run/secrets/engine_secret_key
+      TC_VAPID_PRIVATE_KEY_FILE: /run/secrets/vapid_private_key
+      TC_VAPID_SUBJECT: mailto:${TC_ACME_EMAIL:?set TC_ACME_EMAIL in .env}
+      TC_RP_ORIGIN: https://${TC_DOMAIN}
+      # Empty = live order sending stays disarmed. Set to "enabled" only after onboarding
+      # verification and passkey-signed live authorization (docs/deployment.md §6).
+      TC_LIVE_TRADING: ${TC_LIVE_TRADING:-}
+      TC_LOG: ${TC_LOG:-info}
+    secrets: [database_url, engine_secret_key, vapid_private_key]
+    # No inbound port. backend: MySQL; egress: brokers, ECB, market data, push services.
+    networks: [backend, egress]
+    mem_limit: 384m
+    pids_limit: 256
+    stop_grace_period: 30s
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/tc-server", "healthcheck", "--url", "http://127.0.0.1:9090/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  caddy:
+    image: ${TC_WEB_IMAGE:-trading-center/web}:${TC_IMAGE_TAG:-latest}
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      TC_DOMAIN: ${TC_DOMAIN}
+      TC_ACME_EMAIL: ${TC_ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [public, edge]
+    mem_limit: 128m
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+networks:
+  public: {}            # Caddy only: published ports + ACME
+  edge: { internal: true }
+  backend: { internal: true }
+  egress: {}            # engine only: outbound to brokers/data/push
+
+volumes:
+  mysql-data: {}
+  caddy-data: {}
+  caddy-config: {}
+
+secrets:
+  mysql_root_password:    { file: ./deploy/secrets/mysql_root_password }
+  mysql_app_password:     { file: ./deploy/secrets/mysql_app_password }
+  mysql_migrate_password: { file: ./deploy/secrets/mysql_migrate_password }
+  database_url:           { file: ./deploy/secrets/database_url }
+  database_url_migrate:   { file: ./deploy/secrets/database_url_migrate }
+  engine_public_key:      { file: ./deploy/secrets/engine_public_key }
+  engine_secret_key:      { file: ./deploy/secrets/engine_secret_key }
+  vapid_public_key:       { file: ./deploy/secrets/vapid_public_key }
+  vapid_private_key:      { file: ./deploy/secrets/vapid_private_key }

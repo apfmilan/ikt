@@ -1,0 +1,40 @@
+name: Docker images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Images are pushed only when a registry is configured:
+      #   variable TC_REGISTRY (e.g. ghcr.io/owner) + secrets REGISTRY_USERNAME / REGISTRY_PASSWORD.
+      TC_REGISTRY: ${{ vars.TC_REGISTRY }}
+      HAS_REGISTRY_CREDS: ${{ secrets.REGISTRY_USERNAME != '' && secrets.REGISTRY_PASSWORD != '' }}
+    strategy:
+      matrix:
+        target: [server, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Registry login
+        if: env.TC_REGISTRY != '' && env.HAS_REGISTRY_CREDS == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.TC_REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: ${{ env.TC_REGISTRY != '' && env.HAS_REGISTRY_CREDS == 'true' }}
+          tags: |
+            ${{ env.TC_REGISTRY != '' && format('{0}/trading-center-{1}:{2}', env.TC_REGISTRY, matrix.target, github.sha) || format('trading-center/{0}:ci', matrix.target) }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}

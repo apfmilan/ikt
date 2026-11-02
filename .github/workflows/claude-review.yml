@@ -1,0 +1,43 @@
+name: Claude review
+
+# Automated code review by Claude Code using the project's reviewer agents.
+# Requires repository secret ANTHROPIC_API_KEY (Settings > Secrets and variables > Actions).
+# Runs only for same-repository PRs (fork PRs do not receive secrets).
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request for the Trading Center platform.
+            Apply the checklists in .claude/agents/code-reviewer.md, .claude/agents/risk-analyst.md
+            (anything that can place, size or cancel an order) and .claude/agents/security-engineer.md
+            (credentials, auth, deployment). Report one finding per line as
+            `path:line: SEVERITY: problem. fix.` and post them as inline review comments.
+            Never suggest weakening risk limits, enabling live trading in tests, or logging secrets.
+          claude_args: "--max-turns 15"

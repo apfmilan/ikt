@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal capability. Grants nothing to the remote origin: no `remote` URLs are listed and no permissions are given, so the loaded HTTPS page has no IPC access.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": []
+}

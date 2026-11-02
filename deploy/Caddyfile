@@ -1,0 +1,61 @@
+# Trading Center edge proxy: automatic HTTPS, static PWA, /api reverse proxy.
+# Required env: TC_DOMAIN, TC_ACME_EMAIL (set in .env, passed by docker-compose).
+{
+	email {$TC_ACME_EMAIL}
+	admin 127.0.0.1:2019
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+{$TC_DOMAIN} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	# Security headers for every response.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), publickey-credentials-get=(self), publickey-credentials-create=(self)"
+		-Server
+	}
+	# Content-Security-Policy generated at image build time (Dockerfile web-builder stage).
+	import /etc/caddy/csp.caddy
+
+	# API + WebSocket (/api/ws). reverse_proxy upgrades WebSockets automatically.
+	handle /api/* {
+		header Cache-Control "no-store"
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy api:8080 {
+			header_up X-Real-IP {remote_host}
+			health_uri /api/health
+			health_interval 15s
+			health_timeout 3s
+			transport http {
+				dial_timeout 3s
+				response_header_timeout 30s
+			}
+		}
+	}
+
+	# Static Next.js export.
+	handle {
+		root * /srv
+		@immutable path /_next/static/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+		@sw path /sw.js /manifest.webmanifest
+		header @sw Cache-Control "no-cache"
+		try_files {path} {path}.html {path}/index.html /index.html
+		file_server
+	}
+}

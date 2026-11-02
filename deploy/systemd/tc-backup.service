@@ -1,0 +1,12 @@
+[Unit]
+Description=Trading Center encrypted MySQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO_DIR@
+EnvironmentFile=-/etc/trading-center/backup.env
+ExecStart=@REPO_DIR@/deploy/scripts/backup.sh
+Nice=10
+IOSchedulingClass=idle

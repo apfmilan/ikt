@@ -355,6 +355,7 @@ pub struct Report {
 }
 
 /// Run walk-forward validation for one strategy family on one market.
+#[allow(clippy::too_many_arguments)]
 pub fn walk_forward(
     s: &Series,
     family: &str,

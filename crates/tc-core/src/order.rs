@@ -176,20 +176,23 @@ impl OrderState {
     /// order lifecycle changes; the store refuses writes that fail this check.
     pub fn transition(self, to: OrderState) -> Result<OrderState, CoreError> {
         use OrderState::*;
-        let ok = match (self, to) {
-            (Pending, Submitting | Aborted) => true,
-            (
-                Submitting,
-                Open | PartiallyFilled | Filled | Rejected | Unknown | Cancelled | Expired,
-            ) => true,
-            (
-                Unknown,
-                Open | PartiallyFilled | Filled | Cancelled | Expired | Rejected | NotPlaced,
-            ) => true,
-            (Open, PartiallyFilled | Filled | Cancelled | Expired) => true,
-            (PartiallyFilled, PartiallyFilled | Filled | Cancelled | Expired) => true,
-            _ => false,
-        };
+        let ok = matches!(
+            (self, to),
+            (Pending, Submitting | Aborted)
+                | (
+                    Submitting,
+                    Open | PartiallyFilled | Filled | Rejected | Unknown | Cancelled | Expired,
+                )
+                | (
+                    Unknown,
+                    Open | PartiallyFilled | Filled | Cancelled | Expired | Rejected | NotPlaced,
+                )
+                | (Open, PartiallyFilled | Filled | Cancelled | Expired)
+                | (
+                    PartiallyFilled,
+                    PartiallyFilled | Filled | Cancelled | Expired
+                )
+        );
         if ok {
             Ok(to)
         } else {

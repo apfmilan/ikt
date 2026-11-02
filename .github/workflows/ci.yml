@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Live order sending must never be armed in CI.
+  TC_LIVE_TRADING: ""
+
+jobs:
+  rust:
+    name: Rust fmt / clippy / tests
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-password
+          MYSQL_DATABASE: tc_test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      TC_TEST_DATABASE_URL: mysql://root:ci-root-password@127.0.0.1:3306/tc_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Unit and mocked integration tests
+        run: cargo test --workspace --locked
+      - name: MySQL integration tests
+        run: cargo test -p tc-store --locked -- --include-ignored
+
+  rust-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cargo-audit
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  web:
+    name: Web typecheck / lint / build / audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: hashFiles('apps/web/package-lock.json') != ''
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - if: hashFiles('apps/web/package-lock.json') != ''
+        run: npm ci --no-audit --no-fund
+      - if: hashFiles('apps/web/package-lock.json') != ''
+        run: npm run typecheck
+      - if: hashFiles('apps/web/package-lock.json') != ''
+        run: npm run lint
+      - if: hashFiles('apps/web/package-lock.json') != ''
+        run: npm run build
+      - if: hashFiles('apps/web/package-lock.json') != ''
+        run: npm audit --omit=dev --audit-level=high
+
+  compose:
+    name: Compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.yml with placeholder secrets
+        run: |
+          for f in mysql_root_password mysql_app_password mysql_migrate_password database_url \
+                   database_url_migrate engine_public_key engine_secret_key vapid_public_key vapid_private_key; do
+            echo placeholder > "deploy/secrets/$f"
+          done
+          TC_DOMAIN=ci.example.com TC_ACME_EMAIL=ci@example.com docker compose config --quiet

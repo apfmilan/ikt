@@ -56,6 +56,9 @@ pub struct EtfTarget {
     pub instrument: String,
     /// Weight fraction (all weights sum to 1).
     pub weight: Decimal,
+    /// Market-data symbol for pricing (e.g. EODHD `CSPX.LSE`); required before investing.
+    #[serde(default)]
+    pub data_symbol: Option<String>,
 }
 
 /// Configurable plan assumptions (all HUF).
@@ -369,6 +372,7 @@ mod tests {
             etf_targets: vec![EtfTarget {
                 instrument: "trading212:X".into(),
                 weight: dec!(0.5),
+                data_symbol: None,
             }],
             ..PlanConfig::default()
         };

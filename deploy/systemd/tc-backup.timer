@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Trading Center backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Europe/Budapest
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
