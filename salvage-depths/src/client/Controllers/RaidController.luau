@@ -140,10 +140,12 @@ function RaidController.start()
 	new("UICorner", { CornerRadius = UDim.new(0.2, 0) }, peacefulBtn)
 	local peacefulReq = Remotes.event("PeacefulToggle")
 	table.insert(connections, peacefulBtn.Activated:Connect(function()
-		peaceful = not peaceful
+		peacefulReq:FireServer(not peaceful)
+	end))
+	table.insert(connections, Remotes.event("PeacefulState").OnClientEvent:Connect(function(state: any)
+		peaceful = state == true
 		peacefulBtn.Text = if peaceful then "Peaceful: ON" else "Peaceful: OFF"
 		peacefulBtn.BackgroundColor3 = if peaceful then Color3.fromRGB(40, 140, 90) else Color3.fromRGB(60, 60, 70)
-		peacefulReq:FireServer(peaceful)
 	end))
 
 	script.Destroying:Once(function()

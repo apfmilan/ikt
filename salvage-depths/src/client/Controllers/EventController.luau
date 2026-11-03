@@ -111,7 +111,7 @@ function EventController.start()
 	table.insert(connections, Remotes.event("EventScore").OnClientEvent:Connect(function(p: any)
 		if type(p) ~= "table" then return end
 		panel.Visible = true
-		TweenService:Create(meterFill, meterInfo, { Size = UDim2.fromScale(math.clamp(tonumber(p.meter) or 0, 0, 1), 1) }):Play()
+		TweenService:Create(meterFill, meterInfo, { Size = UDim2.fromScale(math.clamp((tonumber(p.meter) or 0) / 100, 0, 1), 1) }):Play()
 		yourLabel.Text = `Your score: {math.floor(tonumber(p.yourScore) or 0)}`
 		local top = if type(p.top) == "table" then p.top else {}
 		for i = 1, 3 do

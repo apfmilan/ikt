@@ -21,10 +21,10 @@ local connections: { RBXScriptConnection } = {}
 local function collectItems(catalog: any): { any }
 	local items: { any } = {}
 	for _, def in (catalog.GamePasses or {}) do
-		table.insert(items, { def = def, pass = true })
+		if def.Id ~= 0 then table.insert(items, { def = def, pass = true }) end
 	end
 	for _, def in (catalog.DevProducts or {}) do
-		table.insert(items, { def = def, pass = false })
+		if def.Id ~= 0 then table.insert(items, { def = def, pass = false }) end
 	end
 	return items
 end
@@ -82,7 +82,7 @@ function ShopController.start()
 		end
 		local items = collectItems(catalog)
 		if #items == 0 then
-			status.Text = "Nothing for sale yet."
+			status.Text = "Shop opens soon."
 			return
 		end
 		populated = true

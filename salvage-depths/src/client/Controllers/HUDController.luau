@@ -2,7 +2,6 @@
 -- Balances, oxygen/depth bar, Dive/Surface/Dock buttons.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 
 local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remotes"))
 local GameConfig = require(ReplicatedStorage.Shared:WaitForChild("GameConfig"))
@@ -84,7 +83,6 @@ function HUDController.start()
 	button("Dock", Color3.fromRGB(120, 90, 50), function() dockReq:FireServer() end)
 
 	local maxO2 = GameConfig.Dive.MaxOxygen
-	local tweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 	table.insert(connections, Remotes.event("BalanceUpdate").OnClientEvent:Connect(function(b: any)
 		if type(b) ~= "table" then return end
@@ -97,10 +95,8 @@ function HUDController.start()
 		if type(d) ~= "table" then return end
 		local oxygen = tonumber(d.oxygen) or 0
 		local frac = math.clamp(oxygen / maxO2, 0, 1)
-		TweenService:Create(barFill, tweenInfo, {
-			Size = UDim2.fromScale(frac, 1),
-			BackgroundColor3 = if frac < 0.25 then Color3.fromRGB(230, 60, 60) else Color3.fromRGB(70, 200, 255),
-		}):Play()
+		barFill.Size = UDim2.fromScale(frac, 1)
+		barFill.BackgroundColor3 = if frac < 0.25 then Color3.fromRGB(230, 60, 60) else Color3.fromRGB(70, 200, 255)
 		barText.Text = `{tostring(d.state)} | Depth {math.floor(tonumber(d.depth) or 0)}m | O2 {math.floor(frac * 100)}%`
 	end))
 
