@@ -29,12 +29,15 @@ local function push(player: Player)
 	Remotes.event("BalanceUpdate"):FireClient(player, EconomyService.getBalance(player))
 end
 
-local function add(player: Player, field: "Soft" | "Gems" | "Special", n: number)
-	if not validAmount(n) then return end
+-- Returns false if nothing was added or the result was clamped to MAX_BALANCE.
+local function add(player: Player, field: "Soft" | "Gems" | "Special", n: number): boolean
+	if not validAmount(n) then return false end
 	local d = DataService.get(player)
-	if not d then return end
-	d[field] = math.min(d[field] + n, MAX_BALANCE)
+	if not d then return false end
+	local total = d[field] + n
+	d[field] = math.min(total, MAX_BALANCE)
 	push(player)
+	return total <= MAX_BALANCE
 end
 
 local function spend(player: Player, field: "Soft" | "Gems", n: number): boolean
@@ -46,15 +49,18 @@ local function spend(player: Player, field: "Soft" | "Gems", n: number): boolean
 	return true
 end
 
-function EconomyService.addSoft(player: Player, n: number) add(player, "Soft", n) end
-function EconomyService.addGems(player: Player, n: number) add(player, "Gems", n) end
-function EconomyService.addSpecial(player: Player, n: number) add(player, "Special", n) end
+function EconomyService.addSoft(player: Player, n: number): boolean return add(player, "Soft", n) end
+function EconomyService.addGems(player: Player, n: number): boolean return add(player, "Gems", n) end
+function EconomyService.addSpecial(player: Player, n: number): boolean return add(player, "Special", n) end
 function EconomyService.spendSoft(player: Player, n: number): boolean return spend(player, "Soft", n) end
 -- Gems: cosmetics / slots / display cases / event keys ONLY. Never defenses, raid power, shields.
 function EconomyService.spendGems(player: Player, n: number): boolean return spend(player, "Gems", n) end
 
 function EconomyService.init()
 	DataService.onLoaded(push)
+	Remotes.event("ClientReady").OnServerEvent:Connect(function(player: Player)
+		push(player)
+	end)
 	Players.PlayerRemoving:Connect(function(p) lastSnapshot[p] = nil end)
 
 	Remotes.func("GetProfileSnapshot").OnServerInvoke = function(player: Player)
@@ -68,6 +74,7 @@ function EconomyService.init()
 		return {
 			soft = d.Soft, gems = d.Gems, special = d.Special,
 			tutorialStep = d.TutorialStep, defenses = defenses,
+			peaceful = d.Peaceful, securedCargo = d.SecuredCargo,
 		}
 	end
 end

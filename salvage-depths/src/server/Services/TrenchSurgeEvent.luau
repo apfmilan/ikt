@@ -56,6 +56,7 @@ function TrenchSurgeEvent.run(): ({ [Player]: number }, boolean)
 
 	local elapsed, sinceScore = 0, SCORE_INTERVAL
 	local sealed = true
+	local ok, err = pcall(function()
 	while elapsed < ev.DurationSeconds do
 		task.wait(TICK)
 		elapsed += TICK
@@ -68,8 +69,13 @@ function TrenchSurgeEvent.run(): ({ [Player]: number }, boolean)
 		if pressure >= 100 then sealed = false; break end
 		if pressure <= 0 then break end
 	end
+	end)
 	conn:Disconnect()
 	leaveConn:Disconnect()
+	if not ok then
+		warn("[TrenchSurgeEvent] loop failed: " .. tostring(err))
+		error(err, 0)
+	end
 	broadcast()
 
 	-- Rewards (participants still in server only).
@@ -78,11 +84,14 @@ function TrenchSurgeEvent.run(): ({ [Player]: number }, boolean)
 		if p.Parent == Players and s >= ev.ParticipationThreshold then table.insert(ranked, { p = p, s = s }) end
 	end
 	table.sort(ranked, function(a, b) return a.s > b.s end)
+	local premiumMin = math.max(ev.ParticipationThreshold, 3)
 	for rank, r in ranked do
 		if sealed then
 			EconomyService.addSoft(r.p, math.min(1000, 100 + 25 * r.s))
-			EconomyService.addGems(r.p, rng:NextInteger(5, 15))
-			if rank <= 3 then EconomyService.addSpecial(r.p, if rank == 1 then 2 else 1) end
+			if r.s >= premiumMin then EconomyService.addGems(r.p, rng:NextInteger(5, 15)) end
+			if rank <= 3 and r.s >= math.max(premiumMin, 5) then
+				EconomyService.addSpecial(r.p, if rank == 1 then 2 else 1)
+			end
 		else
 			EconomyService.addSoft(r.p, 25 + 5 * r.s)
 		end

@@ -12,7 +12,9 @@ type Def = Types.MonetizationDef
 
 local MonetizationService = {}
 
-local NUMERIC_GRANTS = { EventKeys = true, DisplayCases = true, BlueprintSlots = true }
+local NUMERIC_GRANTS: { [string]: boolean } = { EventKeys = true, DisplayCases = true, BlueprintSlots = true }
+local MAX_RECEIPTS = 200
+local pendingSave: { [string]: boolean } = {} -- receipts recorded+granted in memory but not yet saved
 
 local function grantProduct(player: Player, def: Def): boolean
 	local data = DataService.get(player)
@@ -22,9 +24,17 @@ local function grantProduct(player: Player, def: Def): boolean
 	for k, v in grant do
 		if type(v) ~= "number" or v <= 0 then continue end
 		if k == "Gems" then
-			EconomyService.addGems(player, v)
-		elseif NUMERIC_GRANTS[k] then
-			(data :: any)[k] += v
+			if not EconomyService.addGems(player, v) then
+				warn(`[Monetization] Gems grant clamped for {player.Name} ({def.Key})`)
+			end
+		elseif not NUMERIC_GRANTS[k] then
+			continue
+		elseif k == "EventKeys" then
+			data.EventKeys += v
+		elseif k == "DisplayCases" then
+			data.DisplayCases += v
+		elseif k == "BlueprintSlots" then
+			data.BlueprintSlots += v
 		end
 	end
 	return true
@@ -61,13 +71,31 @@ function MonetizationService.init()
 		local data = DataService.get(player)
 		if not data then return Enum.ProductPurchaseDecision.NotProcessedYet end
 		local key = tostring(info.PurchaseId)
-		if data.Receipts[key] then return Enum.ProductPurchaseDecision.PurchaseGranted end
+		if data.Receipts[key] then
+			if pendingSave[key] then
+				if not DataService.saveNow(player) then return Enum.ProductPurchaseDecision.NotProcessedYet end
+				pendingSave[key] = nil
+			end
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
 		local def = Catalog.byProductId[info.ProductId]
 		if not def then return Enum.ProductPurchaseDecision.NotProcessedYet end
 		-- Mark first so a re-entrant call cannot double grant.
 		data.Receipts[key] = true
+		table.insert(data.ReceiptOrder, key)
 		if not grantProduct(player, def) then
 			data.Receipts[key] = nil
+			table.remove(data.ReceiptOrder, #data.ReceiptOrder)
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+		while #data.ReceiptOrder > MAX_RECEIPTS do
+			local old = table.remove(data.ReceiptOrder, 1) :: string
+			data.Receipts[old] = nil
+			pendingSave[old] = nil
+		end
+		-- Grant is in memory; only confirm once persisted. On failure the retry re-saves (no double grant).
+		if not DataService.saveNow(player) then
+			pendingSave[key] = true
 			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 		return Enum.ProductPurchaseDecision.PurchaseGranted

@@ -10,9 +10,10 @@ local EVENTS = {
 	"DiveUpdate",      -- { state: string, depth: number, oxygen: number }
 	"RaidWarning",     -- { attackerUserId: number, secondsLeft: number } | { cleared: true }
 	"EventAnnounce",   -- { name: string, startsIn: number, duration: number } | { ended: true }
-	"EventScore",      -- { meter: number, yourScore: number, top: { { name: string, score: number } } }
+	"EventScore",      -- { meter: number (0..100), yourScore: number, top: { { name: string, score: number } } }
 	"TutorialStep",    -- { step: number, id: string, text: string }
 	"Notify",          -- { text: string }
+	"PeacefulState",   -- boolean
 	-- client -> server
 	"DiveRequest",     -- "Dive" | "Surface"
 	"SalvageRequest",  -- wreckId: string
@@ -23,10 +24,11 @@ local EVENTS = {
 	"DeliverCore",     -- no args (Trench Surge)
 	"TutorialAck",     -- stepId: string
 	"PeacefulToggle",  -- boolean
+	"ClientReady",     -- no args
 }
 
 local FUNCTIONS = {
-	"GetProfileSnapshot", -- returns { soft, gems, special, tutorialStep, defenses }
+	"GetProfileSnapshot", -- returns { soft, gems, special, tutorialStep, defenses, peaceful, securedCargo }
 }
 
 local Remotes = {}

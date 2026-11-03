@@ -12,10 +12,12 @@ local CargoService = require(script.Parent.CargoService)
 
 local SALVAGE_RANGE = 30
 local SALVAGE_TIME = 0.8
-local MIN_INTERVAL = 0.5
+local MIN_INTERVAL = SALVAGE_TIME -- server-enforced: never faster than one salvage animation
+local MAX_SPEED = 120
 
 local SalvageService = {}
 local lastReq: { [Player]: number } = {}
+local lastSalvage: { [Player]: { pos: Vector3, t: number } } = {}
 local conns: { RBXScriptConnection } = {}
 
 local function onSalvage(player: Player, wreckId: any)
@@ -32,11 +34,14 @@ local function onSalvage(player: Player, wreckId: any)
 	if not root or not root:IsA("BasePart") then return end
 	if (root.Position - wreck.part.Position).Magnitude > SALVAGE_RANGE then return end
 	if wreck.depth > DiveService.getMaxDepth(player) + 10 then return end
+	local prev = lastSalvage[player]
+	if prev and (root.Position - prev.pos).Magnitude / math.max(now - prev.t, 1e-3) > MAX_SPEED then return end
 
 	local relic = wreck.relic
 	local value = SectorService.claimWreck(wreckId)
 	if not value then return end
 
+	lastSalvage[player] = { pos = root.Position, t = now }
 	DiveService.setSalvaging(player, true)
 	task.delay(SALVAGE_TIME, function()
 		if player.Parent and DiveService.getState(player) == "Salvaging" then
@@ -54,7 +59,7 @@ end
 
 function SalvageService.init()
 	table.insert(conns, Remotes.event("SalvageRequest").OnServerEvent:Connect(onSalvage))
-	table.insert(conns, Players.PlayerRemoving:Connect(function(p) lastReq[p] = nil end))
+	table.insert(conns, Players.PlayerRemoving:Connect(function(p) lastReq[p] = nil; lastSalvage[p] = nil end))
 end
 
 return SalvageService

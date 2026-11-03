@@ -1,6 +1,7 @@
 --!strict
 -- Exposed hold (raidable, in-memory) vs Secured vault (profile.SecuredCargo, never raidable).
--- Docking moves Exposed -> Secured up to Dock Vault capacity and cashes the moved units in as Scrap (soft).
+-- Docking cashes ALL Exposed units in as Scrap (soft); the Secured counter is a display total capped at Dock Vault capacity,
+-- so income never stalls at capacity.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -53,6 +54,19 @@ function CargoService.takeExposed(player: Player, n: number): number
 	return taken
 end
 
+-- Cashes out the whole Exposed hold; returns units moved.
+local function settle(player: Player): number
+	local data = DataService.get(player)
+	if not data or not DataService.isLoaded(player) then return 0 end
+	local moved = CargoService.takeExposed(player, exposed[player] or 0)
+	if moved > 0 then
+		data.SecuredCargo = math.min(CargoService.getCapacity(player), data.SecuredCargo + moved)
+		EconomyService.addSoft(player, moved)
+	end
+	push(player)
+	return moved
+end
+
 local function onDock(player: Player)
 	local now = os.clock()
 	if now - (lastReq[player] or 0) < 1 then return end
@@ -63,15 +77,9 @@ local function onDock(player: Player)
 		Remotes.event("Notify"):FireClient(player, { text = "Return to the surface to dock." })
 		return
 	end
-	local room = math.max(0, CargoService.getCapacity(player) - data.SecuredCargo)
-	local moved = CargoService.takeExposed(player, math.min(exposed[player] or 0, room))
-	if moved > 0 then
-		data.SecuredCargo += moved
-		EconomyService.addSoft(player, moved)
-	end
+	local moved = settle(player)
 	DiveService.dock(player)
-	push(player)
-	Remotes.event("Notify"):FireClient(player, { text = ("Docked. Secured %d units."):format(moved) })
+	Remotes.event("Notify"):FireClient(player, { text = ("Docked. Cashed in %d units."):format(moved) })
 	TutorialService.advance(player, "Dock")
 end
 
@@ -81,6 +89,8 @@ function CargoService.init()
 		exposed[p] = nil; lastReq[p] = nil
 	end))
 	DataService.onLoaded(push)
+	DiveService.onDocked(settle) -- auto-dock (surfacing) must not leave a full exposed hold safe
+	table.insert(conns, Remotes.event("ClientReady").OnServerEvent:Connect(push))
 	DefenseService.onChanged(function(p, kind)
 		if kind == "DockVault" then push(p) end
 	end)

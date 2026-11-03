@@ -10,9 +10,10 @@ local ProfileService = require(ReplicatedStorage:WaitForChild("Packages"):WaitFo
 type ProfileData = Types.ProfileData
 
 local TEMPLATE: ProfileData = {
-	Version = 1,
+	Version = 2,
 	Soft = 0, Gems = 0, Special = 0,
 	Receipts = {},
+	ReceiptOrder = {},
 	GamePasses = {},
 	TutorialStep = 0,
 	Defenses = {},
@@ -32,6 +33,16 @@ local store: any = nil
 local profiles: { [Player]: any } = {}
 local callbacks: { (Player) -> () } = {}
 local initialized = false
+local loading: { [Player]: boolean } = {}
+
+-- Runs after Reconcile. Each step upgrades data from Version N to N+1.
+local function migrate(data: ProfileData)
+	if data.Version < 2 then
+		-- v2: ReceiptOrder added. Seed from existing receipts (order unknown).
+		for key in data.Receipts do table.insert(data.ReceiptOrder, key) end
+		data.Version = 2
+	end
+end
 
 local function fire(cb: (Player) -> (), player: Player)
 	task.spawn(function()
@@ -41,13 +52,18 @@ local function fire(cb: (Player) -> (), player: Player)
 end
 
 local function load(player: Player)
-	local profile = store:LoadProfileAsync("Player_" .. player.UserId, "ForceLoad")
-	if not profile then
+	if loading[player] or profiles[player] then return end
+	loading[player] = true
+	local ok, profile = pcall(store.LoadProfileAsync, store, "Player_" .. player.UserId, "ForceLoad")
+	loading[player] = nil
+	if not ok then warn("[DataService] LoadProfileAsync failed: " .. tostring(profile)) end
+	if not ok or not profile then
 		player:Kick("Data failed to load. Please rejoin.")
 		return
 	end
 	profile:AddUserId(player.UserId)
 	profile:Reconcile()
+	migrate(profile.Data :: ProfileData)
 	profile:ListenToRelease(function()
 		profiles[player] = nil
 		if player.Parent == Players then player:Kick("Data session ended. Please rejoin.") end
@@ -88,6 +104,16 @@ end
 
 function DataService.isLoaded(player: Player): boolean
 	return profiles[player] ~= nil
+end
+
+-- Forces a save if the ProfileService build exposes profile:Save(). false = save failed.
+function DataService.saveNow(player: Player): boolean
+	local p = profiles[player]
+	if not p then return false end
+	if type(p.Save) ~= "function" then return true end
+	local ok, err = pcall(p.Save, p)
+	if not ok then warn("[DataService] Save failed: " .. tostring(err)) end
+	return ok
 end
 
 function DataService.release(player: Player)

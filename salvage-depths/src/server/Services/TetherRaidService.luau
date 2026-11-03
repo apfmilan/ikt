@@ -75,11 +75,16 @@ local function resolve(t: Tether, target: Player)
 	local loss = math.floor(CargoService.getExposed(target) * Raid.MaxLossPct)
 	local taken = CargoService.takeExposed(target, loss) -- Exposed only; Secured/Special untouched
 	if taken > 0 then
-		CargoService.addExposed(attacker, taken)
-		local refund = math.floor(taken * Raid.VictimRefundPct)
+		local refund = math.min(taken, math.floor(taken * Raid.VictimRefundPct))
+		CargoService.addExposed(attacker, taken - refund) -- refund comes out of the attacker's gain; no minting
 		if refund > 0 then CargoService.addExposed(target, refund) end
 	end
+	local adata = DataService.get(attacker)
+	if adata then adata.ShieldUntil = now end
 	vdata.LastRaidedAt = now
+	for k, v in vdata.RaidedBy do
+		if now - v >= Raid.PerVictimCooldown then vdata.RaidedBy[k] = nil end
+	end
 	vdata.RaidedBy[tostring(attacker.UserId)] = now
 	notify(attacker, ("Tether complete. Stole %d scrap."):format(taken))
 	notify(target, ("%s raided you for %d scrap (%d refunded). Protected for a while."):format(
@@ -179,6 +184,7 @@ local function onFire(attacker: Player, targetUserId: any)
 		return
 	end
 
+	adata.ShieldUntil = t0 -- raiding drops the attacker's own shield
 	local t: Tether = { attacker = attacker, target = target, startedAt = now, cancelled = false }
 	byAttacker[attacker] = t
 	byTarget[target] = t
@@ -205,18 +211,25 @@ local function onCut(player: Player)
 	end
 end
 
+local function pushPeaceful(player: Player)
+	local data = DataService.get(player)
+	if data then Remotes.event("PeacefulState"):FireClient(player, data.Peaceful) end
+end
+
 local function onPeaceful(player: Player, on: any)
 	if type(on) ~= "boolean" then return end
 	local now = os.clock()
 	if now - (lastToggle[player] or -TOGGLE_COOLDOWN) < TOGGLE_COOLDOWN then
 		notify(player, "Wait before toggling Peaceful again.")
+		pushPeaceful(player)
 		return
 	end
-	if byAttacker[player] or byTarget[player] then return end
+	if byAttacker[player] or byTarget[player] then pushPeaceful(player); return end
 	local data = DataService.get(player)
 	if not data or not DataService.isLoaded(player) then return end
 	lastToggle[player] = now
 	data.Peaceful = on
+	pushPeaceful(player)
 	notify(player, if on then "Peaceful mode on. You cannot raid or be raided." else "Peaceful mode off.")
 end
 
@@ -224,6 +237,8 @@ function TetherRaidService.init()
 	table.insert(conns, Remotes.event("TetherFire").OnServerEvent:Connect(onFire))
 	table.insert(conns, Remotes.event("TetherCut").OnServerEvent:Connect(onCut))
 	table.insert(conns, Remotes.event("PeacefulToggle").OnServerEvent:Connect(onPeaceful))
+	table.insert(conns, Remotes.event("ClientReady").OnServerEvent:Connect(pushPeaceful))
+	DataService.onLoaded(pushPeaceful)
 	table.insert(conns, Players.PlayerRemoving:Connect(function(p)
 		local t = byAttacker[p] or byTarget[p]
 		if t then finish(t) end

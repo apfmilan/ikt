@@ -15,13 +15,18 @@ local TICK = 0.5
 local BASE_DRAIN = 0.2
 local DOCK_DEPTH = 3       -- surfacing below this depth auto-docks
 local CAN_DOCK_DEPTH = 5
+local MAX_DOCK_DRIFT = 40  -- studs from dock position before Docked is revoked
 
-type Session = { machine: StateMachine.Machine?, oxygen: number, depth: number, tutorialSent: boolean }
+type Session = {
+	machine: StateMachine.Machine?, oxygen: number, depth: number, tutorialSent: boolean,
+	dockPos: Vector3?, lastKey: string,
+}
 
 local DiveService = {}
 local sessions: { [Player]: Session } = {}
 local lastReq: { [Player]: number } = {}
 local conns: { RBXScriptConnection } = {}
+local dockListeners: { (Player) -> () } = {}
 
 local ALLOWED: { [string]: { [string]: boolean } } = {
 	Docked = { Diving = true },
@@ -43,20 +48,26 @@ local function getRoot(p: Player): BasePart?
 	return nil
 end
 
-local function push(player: Player, s: Session)
+local function push(player: Player, s: Session, force: boolean?)
 	if not s.machine then return end
-	Remotes.event("DiveUpdate"):FireClient(player, {
-		state = s.machine.current,
-		depth = math.floor(s.depth * 10) / 10,
-		oxygen = math.floor(s.oxygen * 10) / 10,
-	})
+	local depth = math.floor(s.depth * 10) / 10
+	local oxygen = math.floor(s.oxygen * 10) / 10
+	local key = ("%s|%.1f|%.1f"):format(s.machine.current, depth, oxygen)
+	if key == s.lastKey and not force then return end
+	s.lastKey = key
+	Remotes.event("DiveUpdate"):FireClient(player, { state = s.machine.current, depth = depth, oxygen = oxygen })
 end
 
 local function newSession(player: Player)
-	local s: Session = { machine = nil, oxygen = GameConfig.Dive.MaxOxygen, depth = 0, tutorialSent = false }
+	local s: Session = { machine = nil, oxygen = GameConfig.Dive.MaxOxygen, depth = 0, tutorialSent = false, dockPos = nil, lastKey = "" }
 	local function mk(name: string): StateMachine.State
 		return { onEnter = function()
-			if name == "Docked" then s.depth = 0; s.oxygen = GameConfig.Dive.MaxOxygen end
+			if name == "Docked" then
+				s.depth = 0; s.oxygen = GameConfig.Dive.MaxOxygen
+				local r = getRoot(player)
+				s.dockPos = if r then r.Position else nil
+				for _, cb in dockListeners do cb(player) end
+			end
 			push(player, s)
 		end }
 	end
@@ -65,6 +76,7 @@ local function newSession(player: Player)
 	}, "Docked")
 	sessions[player] = s
 	push(player, s)
+	player.CharacterAdded:Connect(function() s.dockPos = nil end) -- respawn resets dock anchor
 end
 
 local function transition(player: Player, to: string): boolean
@@ -88,6 +100,10 @@ end
 function DiveService.getMaxDepth(player: Player): number
 	return GameConfig.Dive.BaseMaxDepth
 		+ GameConfig.Dive.DepthPerPlateTier * DefenseService.getTier(player, "HullPlating")
+end
+
+function DiveService.onDocked(cb: (Player) -> ())
+	table.insert(dockListeners, cb)
 end
 
 function DiveService.canDock(player: Player): boolean
@@ -122,8 +138,22 @@ end
 
 local function step(player: Player, s: Session)
 	local m = s.machine
-	if not m or m.current == "Docked" then return end
+	if not m then return end
 	local root = getRoot(player)
+	if m.current == "Docked" then
+		-- Docked is only valid near the dock; moving away revokes immunity.
+		if root then
+			local dp = s.dockPos
+			if not dp then
+				s.dockPos = root.Position
+			elseif (root.Position - dp).Magnitude > MAX_DOCK_DRIFT
+				or surfaceY() - root.Position.Y > CAN_DOCK_DEPTH + MAX_DOCK_DRIFT then
+				s.dockPos = nil
+				m:go("Diving")
+			end
+		end
+		return
+	end
 	if root then
 		local raw = surfaceY() - root.Position.Y
 		local cap = DiveService.getMaxDepth(player)
@@ -158,6 +188,10 @@ function DiveService.init()
 		sessions[p] = nil; lastReq[p] = nil
 	end))
 	table.insert(conns, Remotes.event("DiveRequest").OnServerEvent:Connect(onRequest))
+	table.insert(conns, Remotes.event("ClientReady").OnServerEvent:Connect(function(p: Player)
+		local s = sessions[p]
+		if s then push(p, s, true) end
+	end))
 	task.spawn(function()
 		while true do
 			task.wait(TICK)

@@ -22,9 +22,9 @@ local function runEvent(name: string, warnSeconds: number): boolean
 	Remotes.event("EventAnnounce"):FireAllClients({ name = name, startsIn = warnSeconds, duration = duration })
 	task.wait(warnSeconds)
 	Remotes.event("EventAnnounce"):FireAllClients({ name = name, startsIn = 0, duration = duration })
-	local ok, _, sealed = pcall(run)
+	local ok, res, sealed = pcall(run)
 	if not ok then
-		warn("[EventScheduler] event failed: " .. tostring(_))
+		warn("[EventScheduler] event failed: " .. tostring(res))
 		Remotes.event("EventAnnounce"):FireAllClients({ ended = true, sealed = false })
 	end
 	running = false

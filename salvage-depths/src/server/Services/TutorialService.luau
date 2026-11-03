@@ -71,6 +71,10 @@ function TutorialService.init()
 		if i then send(player, i) end
 	end)
 	Players.PlayerRemoving:Connect(function(p) lastAck[p] = nil end)
+	Remotes.event("ClientReady").OnServerEvent:Connect(function(player: Player)
+		local i = currentIndex(player)
+		if i then send(player, i) end
+	end)
 
 	-- Client may only acknowledge the info-only CurrencyCrashCourse panel.
 	Remotes.event("TutorialAck").OnServerEvent:Connect(function(player: Player, stepId: any)
