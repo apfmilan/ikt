@@ -89,7 +89,7 @@ function CargoService.init()
 		exposed[p] = nil; lastReq[p] = nil
 	end))
 	DataService.onLoaded(push)
-	DiveService.onDocked(settle) -- auto-dock (surfacing) must not leave a full exposed hold safe
+	DiveService.onDocked(function(p: Player) settle(p) end) -- auto-dock (surfacing) must not leave a full exposed hold safe
 	table.insert(conns, Remotes.event("ClientReady").OnServerEvent:Connect(push))
 	DefenseService.onChanged(function(p, kind)
 		if kind == "DockVault" then push(p) end
