@@ -1,0 +1,8 @@
+[package]
+name = "apfmilan/salvage-depths"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+[dependencies]
+ProfileService = "madstudioroblox/profileservice@1.2.4"
